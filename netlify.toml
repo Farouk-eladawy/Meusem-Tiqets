@@ -1,3 +1,10 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
+
+# يجب السماح بالكاميرا صراحةً.
+# ملاحظة: إن كان Cloudflare يضبط Permissions-Policy أيضاً، يجب تعديله هناك لأن ترويسة Cloudflare تستبدل ترويسة Netlify.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Permissions-Policy = "camera=(self), microphone=(), geolocation=()"

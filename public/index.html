@@ -277,8 +277,18 @@
             const message = (err && err.message) ? String(err.message) : String(err || '');
             const text = `${name} ${message}`.toLowerCase();
 
+            // تشخيص مؤكد من المتصفح: السياسة تمنع الكاميرا في هذا المستند
+            const policyBlocksCamera = !!(
+                (document.featurePolicy && document.featurePolicy.allowsFeature && !document.featurePolicy.allowsFeature('camera')) ||
+                (document.permissionsPolicy && document.permissionsPolicy.allowsFeature && !document.permissionsPolicy.allowsFeature('camera'))
+            );
+
+            if (policyBlocksCamera || text.includes('permissions policy')) {
+                return 'الكاميرا محظورة بواسطة Permissions-Policy على السيرفر (camera=()). عدّل ترويسة Cloudflare/Netlify إلى camera=(self) ثم اضغط Clear cache.';
+            }
+
             if (!window.isSecureContext) {
-                return 'يجب فتح الموقع عبر HTTPS (مثل رابط Netlify) حتى تعمل الكاميرا.';
+                return 'يجب فتح الموقع عبر HTTPS حتى تعمل الكاميرا.';
             }
 
             if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || text.includes('requested device not found')) {
@@ -286,7 +296,7 @@
             }
 
             if (name === 'NotReadableError' || name === 'TrackStartError' || text.includes('could not start video source')) {
-                return 'الكاميرا مشغولة من تطبيق آخر. أغلق التطبيقات التي تستخدم الكاميرا ثم أعد المحاولة.';
+                return 'الكاميرا مشغولة من تطبيق آخر. أغلقه ثم أعد المحاولة.';
             }
 
             if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
@@ -294,7 +304,7 @@
             }
 
             if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || text.includes('permission')) {
-                return 'تعذر الوصول للكاميرا.\n\nجرّب:\n1) اضغط Clear cache\n2) افتح الموقع في Chrome أو Safari مباشرة\n3) من إعدادات الموقع اضبط الكاميرا على Allow ثم أعد المحاولة';
+                return 'تم رفض إذن الكاميرا من المتصفح. اسمح بالكاميرا لهذا الموقع ثم أعد المحاولة.';
             }
 
             return `تعذر فتح الكاميرا: ${name || message || 'خطأ غير معروف'}`;
