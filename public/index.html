@@ -467,7 +467,37 @@
             );
         }
 
-        // طلب واحد فقط للكاميرا — إعادة المحاولة المتعددة تسبب NotAllowedError على أندرويد
+        function pickBackCameraId(cameras) {
+            if (!cameras || !cameras.length) return null;
+
+            const byLabel = cameras.find(c =>
+                /back|rear|environment|world|خلف|خلفية|خلفى/i.test(c.label || '')
+            );
+            if (byLabel) return byLabel.id;
+
+            // استبعد الكاميرا الأمامية إن وُجدت تسميتها
+            const notFront = cameras.find(c =>
+                c.label && !/front|user|face|أمام|امامية|أمامية/i.test(c.label)
+            );
+            if (notFront) return notFront.id;
+
+            // على أغلب الهواتف آخر كاميرا في القائمة هي الخلفية
+            return cameras[cameras.length - 1].id;
+        }
+
+        async function resetScanner() {
+            try {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    await html5QrCode.stop();
+                }
+            } catch (e) {}
+            try {
+                if (html5QrCode) html5QrCode.clear();
+            } catch (e) {}
+            html5QrCode = new Html5Qrcode("reader", { verbose: false });
+        }
+
+        // تشغيل الكاميرا الخلفية على الموبايل (environment) وليس الأمامية
         async function startCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 const err = new Error('المتصفح لا يدعم الكاميرا');
@@ -477,31 +507,56 @@
 
             html5QrCode = new Html5Qrcode("reader", { verbose: false });
 
-            // بدون aspectRatio (يسبب فشل على أجهزة كثيرة)
             const config = {
                 fps: 10,
                 qrbox: { width: 250, height: 250 }
             };
 
+            let lastError = null;
+
+            // 1) إجبار الكاميرا الخلفية
             try {
-                // قيد مرن: الكاميرا الخلفية إن وُجدت، وإلا أي كاميرا
+                await startWithConstraints({ facingMode: { exact: 'environment' } }, config);
+                return;
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل exact environment:', err);
+                await resetScanner();
+            }
+
+            // 2) طلب الخلفية بدون exact (متوافق أوسع)
+            try {
+                await startWithConstraints({ facingMode: 'environment' }, config);
+                return;
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل environment:', err);
+                await resetScanner();
+            }
+
+            // 3) اختيار الخلفية من قائمة الأجهزة
+            try {
+                const cameras = await Html5Qrcode.getCameras();
+                const backId = pickBackCameraId(cameras);
+                if (backId) {
+                    await startWithConstraints(backId, config);
+                    return;
+                }
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل اختيار كاميرا من القائمة:', err);
+                await resetScanner();
+            }
+
+            // 4) ideal environment كآخر محاولة خلفية
+            try {
                 await startWithConstraints({ facingMode: { ideal: 'environment' } }, config);
                 return;
-            } catch (firstError) {
-                console.warn('فشل facingMode ideal environment:', firstError);
-
-                // محاولة أخيرة فورية بدون تأخير وبدون قيود (نفس ضغطة المستخدم)
-                try {
-                    if (html5QrCode.isScanning) {
-                        await html5QrCode.stop();
-                    }
-                } catch (e) {}
-
-                try { html5QrCode.clear(); } catch (e) {}
-                html5QrCode = new Html5Qrcode("reader", { verbose: false });
-
-                await startWithConstraints({ facingMode: 'user' }, config);
+            } catch (err) {
+                lastError = err;
             }
+
+            throw lastError || new Error('تعذر تشغيل الكاميرا الخلفية');
         }
 
         async function startSystem() {
