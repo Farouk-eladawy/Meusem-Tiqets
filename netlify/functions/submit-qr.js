@@ -6,7 +6,7 @@ exports.handler = async function(event, context) {
     
     try {
         const data = JSON.parse(event.body);
-        const ticketCode = data.ticketCode;
+        const ticketCode = String(data.ticketCode || "").trim();
         const ticketType = data.ticketType; // "Citadel" أو "Museum"
 
         if (!ticketCode || !ticketType) {
@@ -25,14 +25,45 @@ exports.handler = async function(event, context) {
             return { statusCode: 500, body: JSON.stringify({ error: "إعدادات Airtable غير مكتملة" }) };
         }
 
-        const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(tableName)}`;
-        
-        const response = await fetch(url, {
+        const headers = {
+            'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+            'Content-Type': 'application/json'
+        };
+
+        const baseUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(tableName)}`;
+
+        // حماية من المسح المكرر: التحقق أولاً إن كان الكود مسجلاً مسبقاً
+        const escapedCode = ticketCode.replace(/'/g, "\\'");
+        const filter = encodeURIComponent(`{Ticket Code}='${escapedCode}'`);
+        const checkResponse = await fetch(`${baseUrl}?filterByFormula=${filter}&maxRecords=1`, {
+            method: 'GET',
+            headers
+        });
+
+        if (!checkResponse.ok) {
+            const errorData = await checkResponse.json().catch(() => ({}));
+            console.error("Airtable Check Error:", errorData);
+            return { statusCode: checkResponse.status, body: JSON.stringify({ error: "فشل التحقق من التذكرة" }) };
+        }
+
+        const checkData = await checkResponse.json();
+        if (checkData.records && checkData.records.length > 0) {
+            return {
+                statusCode: 409,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    success: false,
+                    duplicate: true,
+                    code: ticketCode,
+                    type: ticketType,
+                    error: "التذكرة مستخدمة مسبقاً"
+                })
+            };
+        }
+
+        const response = await fetch(baseUrl, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
+            headers,
             body: JSON.stringify({
                 records: [
                     {

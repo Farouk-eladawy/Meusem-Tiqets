@@ -24,7 +24,7 @@
         <!-- شاشة البدء وطلب الأذونات -->
         <div id="start-screen" class="absolute inset-0 bg-white rounded-xl flex flex-col items-center justify-center z-10 p-6">
             <h2 class="text-xl font-semibold mb-4 text-gray-800">مرحباً بك</h2>
-            <p class="text-center text-gray-600 mb-6 text-sm">نحتاج إلى صلاحية استخدام الكاميرا لمسح التذاكر، والصوت لتشغيل التنبيهات.</p>
+            <p class="text-center text-gray-600 mb-6 text-sm">اضغط الزر ليظهر طلب المتصفح لصلاحية الكاميرا، وسيتم تفعيل الصوت لتنبيهات المسح.</p>
             <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105">
                 بدء النظام والسماح بالصلاحيات
             </button>
@@ -70,28 +70,62 @@
         let audioContext = null;
         let systemStarted = false;
 
+        const SCANNED_STORAGE_KEY = 'scannedTickets_v1';
+        const scannedTickets = loadScannedTickets();
+
         const startScreen = document.getElementById('start-screen');
         const startBtn = document.getElementById('start-btn');
         const statusContainer = document.getElementById('status-container');
         const statusMessage = document.getElementById('status-message');
         const scannedCodeDisplay = document.getElementById('scanned-code');
 
+        function ticketKey(ticketCode, ticketType) {
+            return `${ticketType}::${String(ticketCode).trim()}`;
+        }
+
+        function loadScannedTickets() {
+            try {
+                const raw = localStorage.getItem(SCANNED_STORAGE_KEY);
+                const list = raw ? JSON.parse(raw) : [];
+                return new Set(Array.isArray(list) ? list : []);
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        function persistScannedTickets() {
+            try {
+                localStorage.setItem(SCANNED_STORAGE_KEY, JSON.stringify([...scannedTickets]));
+            } catch (e) {
+                console.warn('تعذر حفظ التذاكر الممسوحة محلياً:', e);
+            }
+        }
+
+        function markTicketScanned(ticketCode, ticketType) {
+            scannedTickets.add(ticketKey(ticketCode, ticketType));
+            persistScannedTickets();
+        }
+
+        function isTicketAlreadyScanned(ticketCode, ticketType) {
+            return scannedTickets.has(ticketKey(ticketCode, ticketType));
+        }
+
         // الحصول على نوع التذكرة المحدد
         function getSelectedTicketType() {
             return document.querySelector('input[name="ticketType"]:checked').value;
         }
 
-        // تفعيل الصوت عند أول تفاعل (مطلوب من المتصفح)
-        async function unlockAudio() {
+        // تفعيل الصوت عند أول ضغطة (لا يحتاج إذن ميكروفون؛ فقط لتشغيل التنبيهات)
+        function unlockAudio() {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return;
 
             audioContext = audioContext || new AudioCtx();
             if (audioContext.state === 'suspended') {
-                await audioContext.resume();
+                audioContext.resume().catch(() => {});
             }
 
-            // نغمة قصيرة لتأكيد تفعيل الصوت وفتح مسار التشغيل
+            // نغمة قصيرة لتأكيد تفعيل الصوت
             playBeep(880, 0.08, 0.05);
         }
 
@@ -99,45 +133,59 @@
         function playBeep(frequency = 980, duration = 0.12, volume = 0.18) {
             if (!audioContext) return;
 
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
+            try {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
 
-            oscillator.type = 'sine';
-            oscillator.frequency.value = frequency;
-            gainNode.gain.value = volume;
+                oscillator.type = 'sine';
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = volume;
 
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
 
-            const now = audioContext.currentTime;
-            oscillator.start(now);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
-            oscillator.stop(now + duration);
+                const now = audioContext.currentTime;
+                oscillator.start(now);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                oscillator.stop(now + duration);
+            } catch (e) {
+                console.warn('تعذر تشغيل الصوت:', e);
+            }
         }
 
-        // طلب أذونات الكاميرا والصوت معاً عند أول مرة
-        async function requestPermissions() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error('المتصفح لا يدعم الوصول للكاميرا أو الصوت.');
+        function playSuccessSound() {
+            playBeep(980, 0.12, 0.18);
+        }
+
+        function playErrorSound() {
+            playBeep(220, 0.22, 0.22);
+        }
+
+        function permissionErrorMessage(err) {
+            const name = err && (err.name || err);
+            if (!window.isSecureContext) {
+                return 'يجب فتح الموقع عبر HTTPS حتى يظهر طلب صلاحية الكاميرا.';
             }
-
-            // طلب الكاميرا + الميكروفون معاً ليظهر حوار الأذونات للمستخدم
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' },
-                audio: true
-            });
-
-            // نوقف المسارات فوراً؛ html5-qrcode سيفتح الكاميرا من جديد للمسح
-            stream.getTracks().forEach(track => track.stop());
-            await unlockAudio();
+            if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+                return 'تم رفض صلاحية الكاميرا. من إعدادات المتصفح اسمح بالكاميرا ثم أعد المحاولة.';
+            }
+            if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+                return 'لم يتم العثور على كاميرا على هذا الجهاز.';
+            }
+            if (name === 'NotReadableError' || name === 'TrackStartError') {
+                return 'الكاميرا مستخدمة من تطبيق آخر. أغلقه ثم أعد المحاولة.';
+            }
+            return 'تعذر فتح الكاميرا. اسمح بالصلاحية عند ظهور رسالة المتصفح ثم أعد المحاولة.';
         }
 
         // دالة عرض الحالة للمستخدم (سريعة جداً)
         function showStatus(message, code, type = 'success') {
-            statusContainer.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+            statusContainer.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-amber-100', 'text-amber-900');
             
             if (type === 'success') {
                 statusContainer.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'duplicate') {
+                statusContainer.classList.add('bg-amber-100', 'text-amber-900');
             } else {
                 statusContainer.classList.add('bg-red-100', 'text-red-800');
             }
@@ -150,57 +198,110 @@
                 if(lastScannedCode === code) { 
                     statusContainer.classList.add('hidden');
                 }
-            }, 800); // 0.8 ثانية فقط
+            }, type === 'duplicate' ? 1600 : 800);
         }
 
-        // دالة الإرسال في الخلفية (Optimistic UI)
-        async function sendToAirtableBackground(ticketCode, ticketType) {
+        function pauseScanningBriefly(ms = 900) {
+            isScanningPaused = true;
+            setTimeout(() => {
+                isScanningPaused = false;
+            }, ms);
+        }
+
+        // دالة الإرسال مع التحقق من التكرار
+        async function sendToAirtable(ticketCode, ticketType) {
+            const response = await fetch('/.netlify/functions/submit-qr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    ticketCode: ticketCode,
+                    ticketType: ticketType
+                })
+            });
+
+            let payload = {};
             try {
-                const response = await fetch('/.netlify/functions/submit-qr', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        ticketCode: ticketCode,
-                        ticketType: ticketType
-                    })
-                });
-                
-                if (!response.ok) {
-                    console.error('خطأ في الإرسال إلى Netlify/Airtable');
-                } else {
-                    console.log(`تم تسجيل التذكرة (${ticketType}) بنجاح:`, ticketCode);
-                }
-            } catch (error) {
-                console.error('فشل الاتصال بالخادم:', error);
+                payload = await response.json();
+            } catch (e) {
+                payload = {};
             }
+
+            if (response.status === 409 || payload.duplicate) {
+                return { ok: false, duplicate: true, payload };
+            }
+
+            if (!response.ok) {
+                return { ok: false, duplicate: false, payload };
+            }
+
+            return { ok: true, duplicate: false, payload };
         }
 
         // عند التقاط كود QR بنجاح
-        function onScanSuccess(decodedText, decodedResult) {
-            if (isScanningPaused || decodedText === lastScannedCode) return;
+        async function onScanSuccess(decodedText) {
+            const ticketCode = String(decodedText || '').trim();
+            if (!ticketCode || isScanningPaused) return;
 
-            // إيقاف مؤقت سريع جداً لمنع القراءة المزدوجة لنفس الكود في نفس اللحظة
-            isScanningPaused = true;
-            lastScannedCode = decodedText;
+            // منع إعادة قراءة نفس الكود المتتالية فوراً من الكاميرا
+            if (ticketCode === lastScannedCode) return;
+
             const currentType = getSelectedTicketType();
             const typeNameArabic = currentType === 'Citadel' ? 'القلعة' : 'المتحف';
 
-            // تنبيه صوتي + إبلاغ المستخدم فوراً
-            playBeep();
-            showStatus(`تم الحفظ (${typeNameArabic}) ✅`, decodedText, 'success');
+            lastScannedCode = ticketCode;
+            pauseScanningBriefly(1200);
 
-            // الإرسال في الخلفية
-            sendToAirtableBackground(decodedText, currentType);
+            // حماية محلية فورية (نفس الجهاز)
+            if (isTicketAlreadyScanned(ticketCode, currentType)) {
+                playErrorSound();
+                showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
+                setTimeout(() => {
+                    if (lastScannedCode === ticketCode) lastScannedCode = null;
+                }, 1500);
+                return;
+            }
 
-            // إعادة التفعيل السريع جداً (يحاكي الماكينات)
+            // نضع علامة مؤقتة لمنع المسح المزدوج أثناء الانتظار
+            markTicketScanned(ticketCode, currentType);
+            showStatus(`جاري التحقق (${typeNameArabic})...`, ticketCode, 'success');
+
+            try {
+                const result = await sendToAirtable(ticketCode, currentType);
+
+                if (result.duplicate) {
+                    playErrorSound();
+                    showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
+                } else if (result.ok) {
+                    playSuccessSound();
+                    showStatus(`تم الحفظ (${typeNameArabic}) ✅`, ticketCode, 'success');
+                    console.log(`تم تسجيل التذكرة (${currentType}) بنجاح:`, ticketCode);
+                } else {
+                    // فشل الشبكة/الخادم: نسمح بإعادة المحاولة لاحقاً
+                    scannedTickets.delete(ticketKey(ticketCode, currentType));
+                    persistScannedTickets();
+                    playErrorSound();
+                    showStatus('فشل التسجيل، أعد المسح', ticketCode, 'error');
+                }
+            } catch (error) {
+                console.error('فشل الاتصال بالخادم:', error);
+                scannedTickets.delete(ticketKey(ticketCode, currentType));
+                persistScannedTickets();
+                playErrorSound();
+                showStatus('فشل الاتصال، أعد المسح', ticketCode, 'error');
+            }
+
             setTimeout(() => {
-                isScanningPaused = false;
-                // نسمح بمسح نفس التذكرة مرة أخرى بعد 2.5 ثانية (لتجنب المسح المزدوج بالخطأ للورقة نفسها)
-                setTimeout(() => { lastScannedCode = null; }, 2500);
-            }, 500); // نصف ثانية فقط ويكون جاهز للتذكرة الجديدة
+                if (lastScannedCode === ticketCode) lastScannedCode = null;
+            }, 1500);
         }
 
         async function startCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                const err = new Error('NotSupportedError');
+                err.name = 'NotSupportedError';
+                throw err;
+            }
+
             html5QrCode = html5QrCode || new Html5Qrcode("reader");
 
             const config = { 
@@ -209,22 +310,42 @@
                 aspectRatio: 1.0
             };
 
-            await html5QrCode.start(
-                { facingMode: "environment" }, // الكاميرا الخلفية
-                config,
-                onScanSuccess,
-                (error) => { /* تجاهل أخطاء التركيز الطبيعية */ }
-            );
+            // طلب الكاميرا مرة واحدة فقط — هنا يظهر حوار موافقة المتصفح
+            try {
+                await html5QrCode.start(
+                    { facingMode: "environment" },
+                    config,
+                    onScanSuccess,
+                    () => {}
+                );
+            } catch (primaryError) {
+                const name = primaryError && primaryError.name;
+                // لا نعيد المحاولة إذا رفض المستخدم الإذن
+                if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+                    throw primaryError;
+                }
+
+                // إن فشلت الكاميرا الخلفية لسبب آخر، نجرب الكاميرا الأمامية
+                await html5QrCode.start(
+                    { facingMode: "user" },
+                    config,
+                    onScanSuccess,
+                    () => {}
+                );
+            }
         }
 
         async function startSystem() {
             if (systemStarted) return;
 
             startBtn.disabled = true;
-            startBtn.textContent = 'جاري طلب الأذونات...';
+            startBtn.textContent = 'جاري طلب صلاحية الكاميرا...';
 
             try {
-                await requestPermissions();
+                // تفعيل الصوت أولاً ضمن ضغطة المستخدم (بدون طلب مايكروفون)
+                unlockAudio();
+
+                // ثم طلب الكاميرا ليظهر حوار الموافقة من المتصفح
                 await startCamera();
 
                 systemStarted = true;
@@ -233,7 +354,7 @@
                 console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
                 startBtn.disabled = false;
                 startBtn.textContent = 'بدء النظام والسماح بالصلاحيات';
-                alert('الرجاء السماح بصلاحيات الكاميرا والصوت ليعمل النظام.');
+                alert(permissionErrorMessage(err));
             }
         }
 
