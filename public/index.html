@@ -11,8 +11,15 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         /* تحسين شكل مربع الكاميرا */
-        #reader { width: 100%; border-radius: 0.5rem; overflow: hidden; border: 2px solid #e5e7eb; }
-        #reader video { object-fit: cover; }
+        #reader {
+            width: 100%;
+            min-height: 280px;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            border: 2px solid #e5e7eb;
+            background: #111;
+        }
+        #reader video { object-fit: cover; width: 100% !important; }
         /* إخفاء الرابط الإعلاني للمكتبة */
         #reader__dashboard_section_csr span a { display: none !important; }
     </style>
@@ -220,20 +227,39 @@
         }
 
         function permissionErrorMessage(err) {
-            const name = err && (err.name || err);
+            const name = (err && err.name) ? String(err.name) : '';
+            const message = (err && err.message) ? String(err.message) : String(err || '');
+            const text = `${name} ${message}`.toLowerCase();
+
             if (!window.isSecureContext) {
-                return 'يجب فتح الموقع عبر HTTPS حتى يظهر طلب صلاحية الكاميرا.';
+                return 'يجب فتح الموقع عبر HTTPS (مثل رابط Netlify) حتى تعمل الكاميرا.';
             }
-            if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-                return 'تم رفض صلاحية الكاميرا. من إعدادات المتصفح اسمح بالكاميرا ثم أعد المحاولة.';
+
+            if (document.featurePolicy && document.featurePolicy.allowsFeature && !document.featurePolicy.allowsFeature('camera')) {
+                return 'الموقع محظور من استخدام الكاميرا بواسطة Permissions-Policy. حدّث النشر ثم أعد المحاولة.';
             }
-            if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+
+            if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || text.includes('requested device not found')) {
                 return 'لم يتم العثور على كاميرا على هذا الجهاز.';
             }
-            if (name === 'NotReadableError' || name === 'TrackStartError') {
-                return 'الكاميرا مستخدمة من تطبيق آخر. أغلقه ثم أعد المحاولة.';
+
+            if (name === 'NotReadableError' || name === 'TrackStartError' || text.includes('could not start video source')) {
+                return 'الكاميرا مشغولة من تطبيق آخر. أغلق التطبيقات التي تستخدم الكاميرا ثم أعد المحاولة.';
             }
-            return 'تعذر فتح الكاميرا. اسمح بالصلاحية عند ظهور رسالة المتصفح ثم أعد المحاولة.';
+
+            if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+                return 'إعدادات الكاميرا غير متوافقة مع الجهاز. أعد المحاولة.';
+            }
+
+            if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || text.includes('permission')) {
+                return 'المتصفح منع الوصول للكاميرا لهذه الجلسة.\n\nجرّب:\n1) اضغط Clear cache ثم أعد المحاولة\n2) افتح الموقع في Chrome/Safari مباشرة (وليس من داخل واتساب/إنستجرام)\n3) تأكد أن الموقع على HTTPS';
+            }
+
+            return `تعذر فتح الكاميرا: ${name || message || 'خطأ غير معروف'}`;
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
 
         // دالة عرض الحالة للمستخدم (سريعة جداً)
@@ -251,9 +277,8 @@
             statusMessage.innerText = message;
             scannedCodeDisplay.innerText = code ? code : '';
             
-            // إخفاء الرسالة بسرعة كبيرة لتجهيز الشاشة للكود التالي
             setTimeout(() => {
-                if(lastScannedCode === code) { 
+                if (lastScannedCode === code) { 
                     statusContainer.classList.add('hidden');
                 }
             }, type === 'duplicate' ? 1600 : 800);
@@ -300,7 +325,6 @@
             const ticketCode = String(decodedText || '').trim();
             if (!ticketCode || isScanningPaused) return;
 
-            // منع إعادة قراءة نفس الكود المتتالية فوراً من الكاميرا
             if (ticketCode === lastScannedCode) return;
 
             const currentType = getSelectedTicketType();
@@ -323,7 +347,6 @@
             lastScannedCode = ticketCode;
             pauseScanningBriefly(1200);
 
-            // حماية محلية فورية (نفس الجهاز)
             if (isTicketAlreadyScanned(ticketCode, currentType)) {
                 playErrorSound();
                 showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
@@ -333,7 +356,6 @@
                 return;
             }
 
-            // نضع علامة مؤقتة لمنع المسح المزدوج أثناء الانتظار
             markTicketScanned(ticketCode, currentType);
             showStatus(`جاري التحقق (${typeNameArabic})...`, ticketCode, 'success');
 
@@ -348,7 +370,6 @@
                     showStatus(`تم الحفظ (${typeNameArabic}) ✅`, ticketCode, 'success');
                     console.log(`تم تسجيل التذكرة (${currentType}) بنجاح:`, ticketCode);
                 } else {
-                    // فشل الشبكة/الخادم: نسمح بإعادة المحاولة لاحقاً
                     scannedTickets.delete(ticketKey(ticketCode, currentType));
                     persistScannedTickets();
                     playErrorSound();
@@ -367,94 +388,97 @@
             }, 1500);
         }
 
-        // طلب صلاحية الكاميرا فقط (بدون مايكروفون) — يظهر حوار المتصفح
-        async function requestCameraPermission() {
+        async function startWithConstraints(cameraConfig, scanConfig) {
+            await html5QrCode.start(
+                cameraConfig,
+                scanConfig,
+                onScanSuccess,
+                () => {}
+            );
+        }
+
+        // تشغيل الكاميرا مرة واحدة من ضغطة المستخدم (أول محاولة مباشرة بدون تعداد مسبق)
+        async function startCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                const err = new Error('NotSupportedError');
+                const err = new Error('المتصفح لا يدعم الكاميرا');
                 err.name = 'NotSupportedError';
                 throw err;
             }
 
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: false
-            });
+            if (html5QrCode) {
+                try { await html5QrCode.stop(); } catch (e) {}
+                try { html5QrCode.clear(); } catch (e) {}
+            }
 
-            // نوقف البث فوراً؛ المكتبة ستفتح الكاميرا للمسح بعد الموافقة
-            stream.getTracks().forEach(track => track.stop());
-        }
+            html5QrCode = new Html5Qrcode("reader", { verbose: false });
 
-        async function startCamera() {
-            html5QrCode = html5QrCode || new Html5Qrcode("reader");
-
-            const config = { 
-                fps: 30,
+            const config = {
+                fps: 15,
                 qrbox: { width: 250, height: 250 },
                 aspectRatio: 1.0
             };
 
-            // بعد منح الإذن: نفضّل الكاميرا الخلفية إن وُجدت
+            // الترتيب مهم: أول getUserMedia يجب أن يكون مباشرة من ضغطة المستخدم
+            const attempts = [
+                { facingMode: 'environment' },
+                { facingMode: 'user' },
+                { facingMode: { ideal: 'environment' } }
+            ];
+
+            let lastError = null;
+
+            for (const cameraConfig of attempts) {
+                try {
+                    await startWithConstraints(cameraConfig, config);
+                    return;
+                } catch (err) {
+                    lastError = err;
+                    console.warn('فشل تشغيل الكاميرا بالمحاولة:', cameraConfig, err);
+                    try { await html5QrCode.stop(); } catch (e) {}
+                    try { html5QrCode.clear(); } catch (e) {}
+                    html5QrCode = new Html5Qrcode("reader", { verbose: false });
+                    await delay(200);
+                }
+            }
+
+            // احتياطي أخير: اختيار كاميرا بالمعرّف
             try {
                 const cameras = await Html5Qrcode.getCameras();
                 if (cameras && cameras.length > 0) {
-                    const backCamera =
-                        cameras.find(c => /back|rear|environment|خلفية/i.test(c.label)) ||
+                    const preferred =
+                        cameras.find(c => /back|rear|environment|خلف|خلفية/i.test(c.label || '')) ||
                         cameras[cameras.length - 1];
 
-                    await html5QrCode.start(
-                        backCamera.id,
-                        config,
-                        onScanSuccess,
-                        () => {}
-                    );
+                    await startWithConstraints(preferred.id, config);
                     return;
                 }
-            } catch (e) {
-                console.warn('تعذر تعداد الكاميرات، نجرب facingMode:', e);
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل التشغيل عبر قائمة الكاميرات:', err);
             }
 
-            try {
-                await html5QrCode.start(
-                    { facingMode: "environment" },
-                    config,
-                    onScanSuccess,
-                    () => {}
-                );
-            } catch (primaryError) {
-                const name = primaryError && primaryError.name;
-                if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-                    throw primaryError;
-                }
-
-                await html5QrCode.start(
-                    { facingMode: "user" },
-                    config,
-                    onScanSuccess,
-                    () => {}
-                );
-            }
+            throw lastError || new Error('تعذر تشغيل أي كاميرا');
         }
 
         async function startSystem() {
             if (systemStarted) return;
 
             startBtn.disabled = true;
-            startBtn.textContent = 'جاري طلب صلاحية الكاميرا...';
+            startBtn.textContent = 'جاري فتح الكاميرا...';
 
             try {
-                // الأهم: طلب الكاميرا أولاً مباشرة من ضغطة الزر ليظهر حوار المتصفح
-                await requestCameraPermission();
+                // أخفِ شاشة الترحيب فوراً بدون تأخير حتى لا تُفقد ضغطة المستخدم
+                startScreen.classList.add('hidden');
 
-                // تفعيل تنبيهات الصوت بعد منح الكاميرا (بدون طلب مايكروفون)
+                // افتح الكاميرا مباشرة (أول عملية بعد الضغط)
+                await startCamera();
                 unlockAudio();
 
-                await startCamera();
-
                 systemStarted = true;
-                startScreen.classList.add('hidden');
                 ticketTypeSection.classList.remove('hidden');
             } catch (err) {
                 console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
+                startScreen.classList.remove('hidden');
                 startBtn.disabled = false;
                 startBtn.textContent = 'بدء النظام والسماح بالصلاحيات';
                 alert(permissionErrorMessage(err));
