@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ماسح التذاكر - القلعة والمتحف</title>
+    <!-- مكتبة Tailwind CSS للتصميم -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- مكتبة html5-qrcode لتشغيل الكاميرا ومسح الـ QR -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        /* تحسين شكل مربع الكاميرا */
+        #reader { width: 100%; border-radius: 0.5rem; overflow: hidden; border: 2px solid #e5e7eb; }
+        #reader video { object-fit: cover; }
+        /* إخفاء الرابط الإعلاني للمكتبة */
+        #reader__dashboard_section_csr span a { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 flex flex-col items-center">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-6 mt-4">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">نظام مسح التذاكر 🎫</h1>
+        
+        <!-- اختيار نوع التذكرة -->
+        <div class="mb-6">
+            <p class="text-sm font-semibold text-gray-700 mb-2">اختر نوع التذكرة أولاً:</p>
+            <div class="flex gap-4">
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="ticketType" value="Citadel" class="peer hidden" checked>
+                    <div class="text-center p-3 rounded-lg border-2 border-gray-200 peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-all">
+                        🏰 القلعة
+                    </div>
+                </label>
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="ticketType" value="Museum" class="peer hidden">
+                    <div class="text-center p-3 rounded-lg border-2 border-gray-200 peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-all">
+                        🏛️ المتحف
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- حاوية الكاميرا -->
+        <div id="reader" class="mb-4"></div>
+        
+        <!-- النتيجة والحالة (Optimistic UI) -->
+        <div id="status-container" class="hidden text-center p-4 rounded-lg mt-4 transition-all duration-300">
+            <p id="status-message" class="font-semibold text-lg"></p>
+            <p id="scanned-code" class="text-sm font-mono mt-2 bg-white bg-opacity-50 inline-block px-3 py-1 rounded"></p>
+        </div>
+
+        <div class="mt-4 text-center">
+            <p class="text-xs text-gray-500">قم بتوجيه الكاميرا نحو كود QR الموجود على التذكرة.</p>
+        </div>
+    </div>
+
+    <script>
+        let html5QrcodeScanner;
+        let isScanningPaused = false;
+        let lastScannedCode = null;
+
+        const statusContainer = document.getElementById('status-container');
+        const statusMessage = document.getElementById('status-message');
+        const scannedCodeDisplay = document.getElementById('scanned-code');
+
+        // الحصول على نوع التذكرة المحدد
+        function getSelectedTicketType() {
+            return document.querySelector('input[name="ticketType"]:checked').value;
+        }
+
+        // دالة عرض الحالة للمستخدم
+        function showStatus(message, code, type = 'success') {
+            statusContainer.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+            
+            if (type === 'success') {
+                statusContainer.classList.add('bg-green-100', 'text-green-800');
+            } else {
+                statusContainer.classList.add('bg-red-100', 'text-red-800');
+            }
+
+            statusMessage.innerText = message;
+            scannedCodeDisplay.innerText = code ? code : '';
+            
+            setTimeout(() => {
+                if(lastScannedCode === code) { 
+                    statusContainer.classList.add('hidden');
+                }
+            }, 2500);
+        }
+
+        // دالة الإرسال في الخلفية (Optimistic UI)
+        async function sendToAirtableBackground(ticketCode, ticketType) {
+            try {
+                const response = await fetch('/.netlify/functions/submit-qr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        ticketCode: ticketCode,
+                        ticketType: ticketType // إرسال نوع التذكرة للخادم
+                    })
+                });
+                
+                if (!response.ok) {
+                    console.error('خطأ في الإرسال إلى Netlify/Airtable');
+                } else {
+                    console.log(`تم تسجيل التذكرة (${ticketType}) في Airtable بنجاح:`, ticketCode);
+                }
+            } catch (error) {
+                console.error('فشل الاتصال بالخادم:', error);
+            }
+        }
+
+        // عند التقاط كود QR بنجاح
+        function onScanSuccess(decodedText, decodedResult) {
+            if (isScanningPaused || decodedText === lastScannedCode) return;
+
+            isScanningPaused = true;
+            lastScannedCode = decodedText;
+            const currentType = getSelectedTicketType();
+            const typeNameArabic = currentType === 'Citadel' ? 'القلعة' : 'المتحف';
+
+            // إبلاغ المستخدم فوراً
+            showStatus(`تم التقاط تذكرة ${typeNameArabic} ✅`, decodedText, 'success');
+
+            // الإرسال في الخلفية
+            sendToAirtableBackground(decodedText, currentType);
+
+            // إعادة التفعيل السريع
+            setTimeout(() => {
+                isScanningPaused = false;
+                setTimeout(() => { lastScannedCode = null; }, 5000);
+            }, 1500); 
+        }
+
+        function onScanFailure(error) {
+            // تجاهل أخطاء القراءة المستمرة
+        }
+
+        // إعداد الماسح
+        document.addEventListener('DOMContentLoaded', () => {
+            html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader",
+                { fps: 10, qrbox: {width: 250, height: 250}, aspectRatio: 1.0 },
+                false
+            );
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        });
+    </script>
+</body>
+</html>
