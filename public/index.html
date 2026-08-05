@@ -24,7 +24,7 @@
         <!-- شاشة البدء وطلب الأذونات -->
         <div id="start-screen" class="absolute inset-0 bg-white rounded-xl flex flex-col items-center justify-center z-10 p-6">
             <h2 class="text-xl font-semibold mb-4 text-gray-800">مرحباً بك</h2>
-            <p class="text-center text-gray-600 mb-6 text-sm">اضغط الزر ليظهر طلب المتصفح لصلاحية الكاميرا، وسيتم تفعيل الصوت لتنبيهات المسح.</p>
+            <p class="text-center text-gray-600 mb-6 text-sm">اضغط الزر ليظهر طلب المتصفح لصلاحية <strong>الكاميرا</strong> فقط، ثم يبدأ المسح مع تنبيهات صوتية.</p>
             <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105">
                 بدء النظام والسماح بالصلاحيات
             </button>
@@ -125,8 +125,8 @@
                 audioContext.resume().catch(() => {});
             }
 
-            // نغمة قصيرة لتأكيد تفعيل الصوت
-            playBeep(880, 0.08, 0.05);
+            // بدون نغمة عند البدء حتى لا يُظن أنها أذونات صوت/مايكروفون
+            // التنبيه الصوتي يعمل لاحقاً عند المسح فقط
         }
 
         // تشغيل تنبيه صوتي عند المسح
@@ -295,22 +295,52 @@
             }, 1500);
         }
 
-        async function startCamera() {
+        // طلب صلاحية الكاميرا فقط (بدون مايكروفون) — يظهر حوار المتصفح
+        async function requestCameraPermission() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 const err = new Error('NotSupportedError');
                 err.name = 'NotSupportedError';
                 throw err;
             }
 
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false
+            });
+
+            // نوقف البث فوراً؛ المكتبة ستفتح الكاميرا للمسح بعد الموافقة
+            stream.getTracks().forEach(track => track.stop());
+        }
+
+        async function startCamera() {
             html5QrCode = html5QrCode || new Html5Qrcode("reader");
 
             const config = { 
-                fps: 30, // سرعة مسح عالية جداً (30 إطار في الثانية)
+                fps: 30,
                 qrbox: { width: 250, height: 250 },
                 aspectRatio: 1.0
             };
 
-            // طلب الكاميرا مرة واحدة فقط — هنا يظهر حوار موافقة المتصفح
+            // بعد منح الإذن: نفضّل الكاميرا الخلفية إن وُجدت
+            try {
+                const cameras = await Html5Qrcode.getCameras();
+                if (cameras && cameras.length > 0) {
+                    const backCamera =
+                        cameras.find(c => /back|rear|environment|خلفية/i.test(c.label)) ||
+                        cameras[cameras.length - 1];
+
+                    await html5QrCode.start(
+                        backCamera.id,
+                        config,
+                        onScanSuccess,
+                        () => {}
+                    );
+                    return;
+                }
+            } catch (e) {
+                console.warn('تعذر تعداد الكاميرات، نجرب facingMode:', e);
+            }
+
             try {
                 await html5QrCode.start(
                     { facingMode: "environment" },
@@ -320,12 +350,10 @@
                 );
             } catch (primaryError) {
                 const name = primaryError && primaryError.name;
-                // لا نعيد المحاولة إذا رفض المستخدم الإذن
                 if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
                     throw primaryError;
                 }
 
-                // إن فشلت الكاميرا الخلفية لسبب آخر، نجرب الكاميرا الأمامية
                 await html5QrCode.start(
                     { facingMode: "user" },
                     config,
@@ -342,10 +370,12 @@
             startBtn.textContent = 'جاري طلب صلاحية الكاميرا...';
 
             try {
-                // تفعيل الصوت أولاً ضمن ضغطة المستخدم (بدون طلب مايكروفون)
+                // الأهم: طلب الكاميرا أولاً مباشرة من ضغطة الزر ليظهر حوار المتصفح
+                await requestCameraPermission();
+
+                // تفعيل تنبيهات الصوت بعد منح الكاميرا (بدون طلب مايكروفون)
                 unlockAudio();
 
-                // ثم طلب الكاميرا ليظهر حوار الموافقة من المتصفح
                 await startCamera();
 
                 systemStarted = true;
