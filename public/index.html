@@ -351,7 +351,7 @@
                 if (lastScannedCode === code) { 
                     statusContainer.classList.add('hidden');
                 }
-            }, type === 'duplicate' ? 1600 : 800);
+            }, type === 'duplicate' || type === 'error' ? 2800 : 1000);
         }
 
         function pauseScanningBriefly(ms = 900) {
@@ -390,6 +390,15 @@
             return { ok: true, duplicate: false, payload };
         }
 
+        function formatSaveError(payload) {
+            const details = payload && payload.details;
+            const detailMsg = typeof details === 'string'
+                ? details
+                : (details && (details.message || details.type)) || '';
+            const base = (payload && payload.error) || 'فشل التسجيل';
+            return detailMsg ? `${base}: ${detailMsg}` : `${base}، أعد المسح`;
+        }
+
         // عند التقاط كود QR بنجاح
         async function onScanSuccess(decodedText) {
             const ticketCode = String(decodedText || '').trim();
@@ -415,7 +424,7 @@
             const typeNameArabic = getTypeNameArabic(currentType);
 
             lastScannedCode = ticketCode;
-            pauseScanningBriefly(1200);
+            pauseScanningBriefly(1500);
 
             if (isTicketAlreadyScanned(ticketCode, currentType)) {
                 playErrorSound();
@@ -426,36 +435,35 @@
                 return;
             }
 
-            markTicketScanned(ticketCode, currentType);
+            // لا نحفظ محلياً إلا بعد نجاح الخادم حتى لا يُمنع إعادة المحاولة خطأً
             showStatus(`جاري التحقق (${typeNameArabic})...`, ticketCode, 'success');
 
             try {
                 const result = await sendToAirtable(ticketCode, currentType);
 
                 if (result.duplicate) {
+                    markTicketScanned(ticketCode, currentType);
                     playErrorSound();
                     showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
                 } else if (result.ok) {
+                    markTicketScanned(ticketCode, currentType);
                     playSuccessSound();
                     showStatus(`تم الحفظ (${typeNameArabic}) ✅`, ticketCode, 'success');
                     console.log(`تم تسجيل التذكرة (${currentType}) بنجاح:`, ticketCode);
                 } else {
-                    scannedTickets.delete(ticketKey(ticketCode, currentType));
-                    persistScannedTickets();
                     playErrorSound();
-                    showStatus('فشل التسجيل، أعد المسح', ticketCode, 'error');
+                    showStatus(formatSaveError(result.payload), ticketCode, 'error');
+                    console.error('فشل التسجيل:', result.payload);
                 }
             } catch (error) {
                 console.error('فشل الاتصال بالخادم:', error);
-                scannedTickets.delete(ticketKey(ticketCode, currentType));
-                persistScannedTickets();
                 playErrorSound();
                 showStatus('فشل الاتصال، أعد المسح', ticketCode, 'error');
             }
 
             setTimeout(() => {
                 if (lastScannedCode === ticketCode) lastScannedCode = null;
-            }, 1500);
+            }, 1800);
         }
 
         async function startWithConstraints(cameraConfig, scanConfig) {
@@ -508,8 +516,17 @@
             html5QrCode = new Html5Qrcode("reader", { verbose: false });
 
             const config = {
-                fps: 10,
-                qrbox: { width: 250, height: 250 }
+                fps: 15,
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+                    const size = Math.max(180, Math.floor(minEdge * 0.72));
+                    return { width: size, height: size };
+                },
+                rememberLastUsedCamera: true,
+                aspectRatio: 1,
+                experimentalFeatures: {
+                    useBarCodeDetectorIfSupported: true
+                }
             };
 
             let lastError = null;
@@ -517,6 +534,7 @@
             // 1) إجبار الكاميرا الخلفية
             try {
                 await startWithConstraints({ facingMode: { exact: 'environment' } }, config);
+                await improveBackCameraFocus();
                 return;
             } catch (err) {
                 lastError = err;
@@ -527,6 +545,7 @@
             // 2) طلب الخلفية بدون exact (متوافق أوسع)
             try {
                 await startWithConstraints({ facingMode: 'environment' }, config);
+                await improveBackCameraFocus();
                 return;
             } catch (err) {
                 lastError = err;
@@ -540,6 +559,7 @@
                 const backId = pickBackCameraId(cameras);
                 if (backId) {
                     await startWithConstraints(backId, config);
+                    await improveBackCameraFocus();
                     return;
                 }
             } catch (err) {
@@ -551,12 +571,26 @@
             // 4) ideal environment كآخر محاولة خلفية
             try {
                 await startWithConstraints({ facingMode: { ideal: 'environment' } }, config);
+                await improveBackCameraFocus();
                 return;
             } catch (err) {
                 lastError = err;
             }
 
             throw lastError || new Error('تعذر تشغيل الكاميرا الخلفية');
+        }
+
+        async function improveBackCameraFocus() {
+            if (!html5QrCode || !html5QrCode.applyVideoConstraints) return;
+            try {
+                await delay(700);
+                await html5QrCode.applyVideoConstraints({
+                    focusMode: 'continuous',
+                    advanced: [{ focusMode: 'continuous' }]
+                });
+            } catch (e) {
+                // بعض الأجهزة لا تدعم focusMode — نتجاهل
+            }
         }
 
         async function startSystem() {

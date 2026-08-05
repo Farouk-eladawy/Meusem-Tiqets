@@ -3,94 +3,121 @@ exports.handler = async function(event, context) {
     if (event.httpMethod !== "POST") {
         return { statusCode: 405, body: JSON.stringify({ error: "Method Not Allowed" }) };
     }
-    
+
+    const json = (statusCode, body) => ({
+        statusCode,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    });
+
     try {
-        const data = JSON.parse(event.body);
+        const data = JSON.parse(event.body || "{}");
         const ticketCode = String(data.ticketCode || "").trim();
         const ticketType = data.ticketType; // "Citadel" أو "Museum"
 
         if (!ticketCode || !ticketType) {
-            return { statusCode: 400, body: JSON.stringify({ error: "بيانات غير مكتملة" }) };
+            return json(400, { error: "بيانات غير مكتملة" });
         }
 
         const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
         const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-        
-        // تحديد اسم الجدول بناءً على الاختيار
-        // يجب أن تنشئ جدولين في Airtable بنفس هذه الأسماء
-        const tableName = ticketType === 'Citadel' ? "Citadel" : "Museum";
+
+        const tableName = ticketType === "Citadel" ? "Citadel" : "Museum";
 
         if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
             console.error("Missing Airtable Environment Variables");
-            return { statusCode: 500, body: JSON.stringify({ error: "إعدادات Airtable غير مكتملة" }) };
+            return json(500, { error: "إعدادات Airtable غير مكتملة" });
         }
 
         const headers = {
-            'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+            "Content-Type": "application/json"
         };
 
         const baseUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(tableName)}`;
 
-        // حماية من المسح المكرر: التحقق أولاً إن كان الكود مسجلاً مسبقاً
-        const escapedCode = ticketCode.replace(/'/g, "\\'");
+        // تهريب آمن لقيم Airtable داخل الصيغة
+        const escapeAirtableString = (value) =>
+            String(value)
+                .replace(/\\/g, "\\\\")
+                .replace(/'/g, "\\'");
+
+        const escapedCode = escapeAirtableString(ticketCode);
         const filter = encodeURIComponent(`{Ticket Code}='${escapedCode}'`);
+
         const checkResponse = await fetch(`${baseUrl}?filterByFormula=${filter}&maxRecords=1`, {
-            method: 'GET',
+            method: "GET",
             headers
         });
 
         if (!checkResponse.ok) {
             const errorData = await checkResponse.json().catch(() => ({}));
             console.error("Airtable Check Error:", errorData);
-            return { statusCode: checkResponse.status, body: JSON.stringify({ error: "فشل التحقق من التذكرة" }) };
+            return json(checkResponse.status, {
+                error: "فشل التحقق من التذكرة",
+                details: errorData?.error || errorData
+            });
         }
 
         const checkData = await checkResponse.json();
         if (checkData.records && checkData.records.length > 0) {
-            return {
-                statusCode: 409,
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    success: false,
-                    duplicate: true,
-                    code: ticketCode,
-                    type: ticketType,
-                    error: "التذكرة مستخدمة مسبقاً"
-                })
-            };
+            return json(409, {
+                success: false,
+                duplicate: true,
+                code: ticketCode,
+                type: ticketType,
+                error: "التذكرة مستخدمة مسبقاً"
+            });
         }
 
-        const response = await fetch(baseUrl, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                records: [
-                    {
-                        fields: {
-                            "Ticket Code": ticketCode,
-                            "Status": "Scanned",
-                            "Scan Time": new Date().toISOString()
-                        }
-                    }
-                ]
-            })
+        // جرّب الحقول الكاملة، ثم الحقول الأساسية إن فشل مخطط الجدول
+        const fieldSets = [
+            {
+                "Ticket Code": ticketCode,
+                Status: "Scanned",
+                "Scan Time": new Date().toISOString()
+            },
+            {
+                "Ticket Code": ticketCode,
+                Status: "Scanned"
+            },
+            {
+                "Ticket Code": ticketCode
+            }
+        ];
+
+        let lastError = null;
+
+        for (const fields of fieldSets) {
+            const response = await fetch(baseUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ records: [{ fields }] })
+            });
+
+            if (response.ok) {
+                return json(200, { success: true, code: ticketCode, type: ticketType });
+            }
+
+            lastError = await response.json().catch(() => ({}));
+            console.error("Airtable Error:", lastError);
+
+            // إن كان الخطأ ليس UNKNOWN_FIELD_NAME، لا داعي للمحاولة بحقول أقل
+            const airtableType = lastError?.error?.type || lastError?.error;
+            if (airtableType && airtableType !== "UNKNOWN_FIELD_NAME" && airtableType !== "INVALID_VALUE_FOR_COLUMN") {
+                return json(response.status, {
+                    error: "فشل الإرسال إلى Airtable",
+                    details: lastError?.error || lastError
+                });
+            }
+        }
+
+        return json(500, {
+            error: "فشل الإرسال إلى Airtable",
+            details: lastError?.error || lastError
         });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error("Airtable Error:", errorData);
-            return { statusCode: response.status, body: JSON.stringify({ error: "فشل الإرسال إلى Airtable" }) };
-        }
-
-        return {
-            statusCode: 200,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ success: true, code: ticketCode, type: ticketType })
-        };
-
     } catch (error) {
         console.error("Error processing request:", error);
-        return { statusCode: 500, body: JSON.stringify({ error: "حدث خطأ داخلي" }) };
+        return json(500, { error: "حدث خطأ داخلي", details: String(error && error.message || error) });
     }
 };
