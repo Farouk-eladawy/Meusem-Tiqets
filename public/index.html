@@ -108,36 +108,51 @@
         const clearCacheBtn = document.getElementById('clear-cache-btn');
         const ticketTypeSection = document.getElementById('ticket-type-section');
         const activeTypeLabel = document.getElementById('active-type-label');
+        const startTypeHint = document.getElementById('start-type-hint');
         const statusContainer = document.getElementById('status-container');
         const statusMessage = document.getElementById('status-message');
         const scannedCodeDisplay = document.getElementById('scanned-code');
         const typeButtons = document.querySelectorAll('.type-btn');
+        const startTypeButtons = document.querySelectorAll('.start-type-btn');
 
-        async function clearAppCacheAndReload() {
-            clearCacheBtn.disabled = true;
-            clearCacheBtn.textContent = 'جاري المسح...';
+        function updateTypeButtonStyles(buttons, ticketType) {
+            buttons.forEach(btn => {
+                const isActive = btn.dataset.type === ticketType;
+                btn.classList.toggle('border-blue-600', isActive);
+                btn.classList.toggle('bg-blue-50', isActive);
+                btn.classList.toggle('ring-2', isActive);
+                btn.classList.toggle('ring-blue-300', isActive);
+                btn.classList.toggle('border-gray-200', !isActive);
+                btn.classList.toggle('bg-white', !isActive);
+            });
+        }
 
-            try {
-                try { localStorage.clear(); } catch (e) {}
-                try { sessionStorage.clear(); } catch (e) {}
+        function setSelectedTicketType(ticketType) {
+            selectedTicketType = ticketType;
 
-                if (window.caches && caches.keys) {
-                    const keys = await caches.keys();
-                    await Promise.all(keys.map(key => caches.delete(key)));
-                }
+            updateTypeButtonStyles(typeButtons, ticketType);
+            updateTypeButtonStyles(startTypeButtons, ticketType);
 
-                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-                    const regs = await navigator.serviceWorker.getRegistrations();
-                    await Promise.all(regs.map(reg => reg.unregister()));
-                }
-            } catch (e) {
-                console.warn('تعذر مسح بعض عناصر الكاش:', e);
+            const typeName = getTypeNameArabic(ticketType);
+            activeTypeLabel.textContent = `جاري المسح لجدول: ${typeName}`;
+            activeTypeLabel.classList.remove('text-amber-700');
+            activeTypeLabel.classList.add('text-blue-700');
+
+            if (startTypeHint) {
+                startTypeHint.textContent = `تم اختيار جدول ${typeName}`;
+                startTypeHint.classList.remove('text-amber-700');
+                startTypeHint.classList.add('text-blue-700');
             }
 
-            // إعادة تحميل بإجبار المتصفح على جلب نسخة جديدة (بديل Hard Refresh)
-            const url = new URL(window.location.href);
-            url.searchParams.set('_refresh', String(Date.now()));
-            window.location.replace(url.toString());
+            startBtn.disabled = false;
+        }
+
+        function getSelectedTicketType() {
+            return selectedTicketType;
+        }
+
+        function getTypeNameArabic(ticketType) {
+            return ticketType === 'Citadel' ? 'القلعة' : 'المتحف';
         }
 
         function ticketKey(ticketCode, ticketType) {
@@ -171,30 +186,30 @@
             return scannedTickets.has(ticketKey(ticketCode, ticketType));
         }
 
-        function getTypeNameArabic(ticketType) {
-            return ticketType === 'Citadel' ? 'القلعة' : 'المتحف';
-        }
+        async function clearAppCacheAndReload() {
+            clearCacheBtn.disabled = true;
+            clearCacheBtn.textContent = 'جاري المسح...';
 
-        function setSelectedTicketType(ticketType) {
-            selectedTicketType = ticketType;
+            try {
+                try { localStorage.clear(); } catch (e) {}
+                try { sessionStorage.clear(); } catch (e) {}
 
-            typeButtons.forEach(btn => {
-                const isActive = btn.dataset.type === ticketType;
-                btn.classList.toggle('border-blue-600', isActive);
-                btn.classList.toggle('bg-blue-50', isActive);
-                btn.classList.toggle('ring-2', isActive);
-                btn.classList.toggle('ring-blue-300', isActive);
-                btn.classList.toggle('border-gray-200', !isActive);
-                btn.classList.toggle('bg-white', !isActive);
-            });
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(key => caches.delete(key)));
+                }
 
-            activeTypeLabel.textContent = `جاري المسح لتذاكر: ${getTypeNameArabic(ticketType)}`;
-            activeTypeLabel.classList.remove('text-amber-700');
-            activeTypeLabel.classList.add('text-blue-700');
-        }
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(reg => reg.unregister()));
+                }
+            } catch (e) {
+                console.warn('تعذر مسح بعض عناصر الكاش:', e);
+            }
 
-        function getSelectedTicketType() {
-            return selectedTicketType;
+            const url = new URL(window.location.href);
+            url.searchParams.set('_refresh', String(Date.now()));
+            window.location.replace(url.toString());
         }
 
         // تفعيل الصوت عند أول ضغطة (لا يحتاج إذن ميكروفون؛ فقط لتشغيل التنبيهات)
@@ -476,6 +491,11 @@
         async function startSystem() {
             if (systemStarted) return;
 
+            if (!selectedTicketType) {
+                alert('اختر الجدول أولاً: القلعة أو المتحف');
+                return;
+            }
+
             startBtn.disabled = true;
             startBtn.textContent = 'جاري فتح الكاميرا...';
 
@@ -488,12 +508,11 @@
                 unlockAudio();
 
                 systemStarted = true;
-                ticketTypeSection.classList.remove('hidden');
             } catch (err) {
                 console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
                 startScreen.classList.remove('hidden');
                 startBtn.disabled = false;
-                startBtn.textContent = 'بدء النظام والسماح بالصلاحيات';
+                startBtn.textContent = 'بدء النظام وتفعيل الكاميرا';
                 alert(permissionErrorMessage(err));
             }
         }
@@ -502,6 +521,12 @@
         document.addEventListener('DOMContentLoaded', () => {
             startBtn.addEventListener('click', startSystem);
             clearCacheBtn.addEventListener('click', clearAppCacheAndReload);
+
+            startTypeButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    setSelectedTicketType(btn.dataset.type);
+                });
+            });
 
             typeButtons.forEach(btn => {
                 btn.addEventListener('click', () => {
