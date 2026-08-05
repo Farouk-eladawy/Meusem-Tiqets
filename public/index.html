@@ -129,6 +129,24 @@
             cameraError.classList.add('hidden');
         }
 
+        async function getLivePermissionsPolicy() {
+            try {
+                const res = await fetch(location.href, { cache: 'no-store' });
+                return res.headers.get('permissions-policy') || '(غير موجودة)';
+            } catch (e) {
+                return '(تعذر القراءة)';
+            }
+        }
+
+        async function diagnoseCameraPolicy() {
+            const policy = await getLivePermissionsPolicy();
+            const allows = !!(
+                (document.featurePolicy && document.featurePolicy.allowsFeature && document.featurePolicy.allowsFeature('camera')) ||
+                (document.permissionsPolicy && document.permissionsPolicy.allowsFeature && document.permissionsPolicy.allowsFeature('camera'))
+            );
+            return { policy, allows };
+        }
+
         function updateTypeButtonStyles(buttons, ticketType) {
             buttons.forEach(btn => {
                 const isActive = btn.dataset.type === ticketType;
@@ -511,7 +529,11 @@
                 startScreen.classList.remove('hidden');
                 startBtn.disabled = false;
                 startBtn.textContent = 'إعادة محاولة تفعيل الكاميرا';
-                showCameraError(permissionErrorMessage(err));
+
+                const diag = await diagnoseCameraPolicy();
+                let msg = permissionErrorMessage(err);
+                msg += ` | Permissions-Policy الحالية: ${diag.policy} | allowsCamera=${diag.allows}`;
+                showCameraError(msg);
             }
         }
 
