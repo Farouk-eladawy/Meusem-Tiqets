@@ -5,5 +5,4 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    Permissions-Policy = "camera=(self), microphone=()"
-    Feature-Policy = "camera 'self'; microphone 'none'"
+    Permissions-Policy = "camera=(self)"
