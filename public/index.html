@@ -60,6 +60,7 @@
                 class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105 disabled:hover:scale-100">
                 بدء النظام وتفعيل الكاميرا
             </button>
+            <p id="camera-error" class="hidden mt-4 text-center text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 w-full"></p>
         </div>
 
         <!-- اختيار/تغيير الجدول أثناء المسح -->
@@ -114,6 +115,19 @@
         const scannedCodeDisplay = document.getElementById('scanned-code');
         const typeButtons = document.querySelectorAll('.type-btn');
         const startTypeButtons = document.querySelectorAll('.start-type-btn');
+        const cameraError = document.getElementById('camera-error');
+
+        function showCameraError(message) {
+            if (!cameraError) return;
+            cameraError.textContent = message;
+            cameraError.classList.remove('hidden');
+        }
+
+        function hideCameraError() {
+            if (!cameraError) return;
+            cameraError.textContent = '';
+            cameraError.classList.add('hidden');
+        }
 
         function updateTypeButtonStyles(buttons, ticketType) {
             buttons.forEach(btn => {
@@ -425,7 +439,7 @@
             );
         }
 
-        // تشغيل الكاميرا مرة واحدة من ضغطة المستخدم (أول محاولة مباشرة بدون تعداد مسبق)
+        // طلب واحد فقط للكاميرا — إعادة المحاولة المتعددة تسبب NotAllowedError على أندرويد
         async function startCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 const err = new Error('المتصفح لا يدعم الكاميرا');
@@ -433,77 +447,51 @@
                 throw err;
             }
 
-            if (html5QrCode) {
-                try { await html5QrCode.stop(); } catch (e) {}
-                try { html5QrCode.clear(); } catch (e) {}
-            }
-
             html5QrCode = new Html5Qrcode("reader", { verbose: false });
 
+            // بدون aspectRatio (يسبب فشل على أجهزة كثيرة)
             const config = {
-                fps: 15,
-                qrbox: { width: 250, height: 250 },
-                aspectRatio: 1.0
+                fps: 10,
+                qrbox: { width: 250, height: 250 }
             };
 
-            // الترتيب مهم: أول getUserMedia يجب أن يكون مباشرة من ضغطة المستخدم
-            const attempts = [
-                { facingMode: 'environment' },
-                { facingMode: 'user' },
-                { facingMode: { ideal: 'environment' } }
-            ];
-
-            let lastError = null;
-
-            for (const cameraConfig of attempts) {
-                try {
-                    await startWithConstraints(cameraConfig, config);
-                    return;
-                } catch (err) {
-                    lastError = err;
-                    console.warn('فشل تشغيل الكاميرا بالمحاولة:', cameraConfig, err);
-                    try { await html5QrCode.stop(); } catch (e) {}
-                    try { html5QrCode.clear(); } catch (e) {}
-                    html5QrCode = new Html5Qrcode("reader", { verbose: false });
-                    await delay(200);
-                }
-            }
-
-            // احتياطي أخير: اختيار كاميرا بالمعرّف
             try {
-                const cameras = await Html5Qrcode.getCameras();
-                if (cameras && cameras.length > 0) {
-                    const preferred =
-                        cameras.find(c => /back|rear|environment|خلف|خلفية/i.test(c.label || '')) ||
-                        cameras[cameras.length - 1];
+                // قيد مرن: الكاميرا الخلفية إن وُجدت، وإلا أي كاميرا
+                await startWithConstraints({ facingMode: { ideal: 'environment' } }, config);
+                return;
+            } catch (firstError) {
+                console.warn('فشل facingMode ideal environment:', firstError);
 
-                    await startWithConstraints(preferred.id, config);
-                    return;
-                }
-            } catch (err) {
-                lastError = err;
-                console.warn('فشل التشغيل عبر قائمة الكاميرات:', err);
+                // محاولة أخيرة فورية بدون تأخير وبدون قيود (نفس ضغطة المستخدم)
+                try {
+                    if (html5QrCode.isScanning) {
+                        await html5QrCode.stop();
+                    }
+                } catch (e) {}
+
+                try { html5QrCode.clear(); } catch (e) {}
+                html5QrCode = new Html5Qrcode("reader", { verbose: false });
+
+                await startWithConstraints({ facingMode: 'user' }, config);
             }
-
-            throw lastError || new Error('تعذر تشغيل أي كاميرا');
         }
 
         async function startSystem() {
             if (systemStarted) return;
 
             if (!selectedTicketType) {
-                alert('اختر الجدول أولاً: القلعة أو المتحف');
+                showCameraError('اختر الجدول أولاً: القلعة أو المتحف');
                 return;
             }
 
+            hideCameraError();
             startBtn.disabled = true;
             startBtn.textContent = 'جاري فتح الكاميرا...';
 
             try {
-                // أخفِ شاشة الترحيب فوراً بدون تأخير حتى لا تُفقد ضغطة المستخدم
+                // أظهر حاوية الكاميرا أولاً (مقاسها لازم يكون ظاهراً قبل التشغيل)
                 startScreen.classList.add('hidden');
 
-                // افتح الكاميرا مباشرة (أول عملية بعد الضغط)
                 await startCamera();
                 unlockAudio();
 
@@ -512,8 +500,8 @@
                 console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
                 startScreen.classList.remove('hidden');
                 startBtn.disabled = false;
-                startBtn.textContent = 'بدء النظام وتفعيل الكاميرا';
-                alert(permissionErrorMessage(err));
+                startBtn.textContent = 'إعادة محاولة تفعيل الكاميرا';
+                showCameraError(permissionErrorMessage(err));
             }
         }
 
