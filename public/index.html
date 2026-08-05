@@ -67,7 +67,11 @@
         let html5QrCode;
         let isScanningPaused = false;
         let lastScannedCode = null;
+        let audioContext = null;
+        let systemStarted = false;
 
+        const startScreen = document.getElementById('start-screen');
+        const startBtn = document.getElementById('start-btn');
         const statusContainer = document.getElementById('status-container');
         const statusMessage = document.getElementById('status-message');
         const scannedCodeDisplay = document.getElementById('scanned-code');
@@ -75,6 +79,57 @@
         // الحصول على نوع التذكرة المحدد
         function getSelectedTicketType() {
             return document.querySelector('input[name="ticketType"]:checked').value;
+        }
+
+        // تفعيل الصوت عند أول تفاعل (مطلوب من المتصفح)
+        async function unlockAudio() {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+
+            audioContext = audioContext || new AudioCtx();
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+
+            // نغمة قصيرة لتأكيد تفعيل الصوت وفتح مسار التشغيل
+            playBeep(880, 0.08, 0.05);
+        }
+
+        // تشغيل تنبيه صوتي عند المسح
+        function playBeep(frequency = 980, duration = 0.12, volume = 0.18) {
+            if (!audioContext) return;
+
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'sine';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            const now = audioContext.currentTime;
+            oscillator.start(now);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+            oscillator.stop(now + duration);
+        }
+
+        // طلب أذونات الكاميرا والصوت معاً عند أول مرة
+        async function requestPermissions() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('المتصفح لا يدعم الوصول للكاميرا أو الصوت.');
+            }
+
+            // طلب الكاميرا + الميكروفون معاً ليظهر حوار الأذونات للمستخدم
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment' },
+                audio: true
+            });
+
+            // نوقف المسارات فوراً؛ html5-qrcode سيفتح الكاميرا من جديد للمسح
+            stream.getTracks().forEach(track => track.stop());
+            await unlockAudio();
         }
 
         // دالة عرض الحالة للمستخدم (سريعة جداً)
@@ -130,7 +185,8 @@
             const currentType = getSelectedTicketType();
             const typeNameArabic = currentType === 'Citadel' ? 'القلعة' : 'المتحف';
 
-            // إبلاغ المستخدم فوراً
+            // تنبيه صوتي + إبلاغ المستخدم فوراً
+            playBeep();
             showStatus(`تم الحفظ (${typeNameArabic}) ✅`, decodedText, 'success');
 
             // الإرسال في الخلفية
@@ -144,27 +200,46 @@
             }, 500); // نصف ثانية فقط ويكون جاهز للتذكرة الجديدة
         }
 
-        // إعداد الكاميرا للعمل التلقائي المباشر
-        document.addEventListener('DOMContentLoaded', () => {
-            html5QrCode = new Html5Qrcode("reader");
-            
-            // إعدادات المسح السريع
+        async function startCamera() {
+            html5QrCode = html5QrCode || new Html5Qrcode("reader");
+
             const config = { 
                 fps: 30, // سرعة مسح عالية جداً (30 إطار في الثانية)
                 qrbox: { width: 250, height: 250 },
                 aspectRatio: 1.0
             };
 
-            // تشغيل الكاميرا الخلفية تلقائياً
-            html5QrCode.start(
+            await html5QrCode.start(
                 { facingMode: "environment" }, // الكاميرا الخلفية
                 config,
                 onScanSuccess,
                 (error) => { /* تجاهل أخطاء التركيز الطبيعية */ }
-            ).catch(err => {
-                console.error("فشل في فتح الكاميرا التلقائي:", err);
-                alert("الرجاء السماح بصلاحيات الكاميرا ليعمل النظام.");
-            });
+            );
+        }
+
+        async function startSystem() {
+            if (systemStarted) return;
+
+            startBtn.disabled = true;
+            startBtn.textContent = 'جاري طلب الأذونات...';
+
+            try {
+                await requestPermissions();
+                await startCamera();
+
+                systemStarted = true;
+                startScreen.classList.add('hidden');
+            } catch (err) {
+                console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
+                startBtn.disabled = false;
+                startBtn.textContent = 'بدء النظام والسماح بالصلاحيات';
+                alert('الرجاء السماح بصلاحيات الكاميرا والصوت ليعمل النظام.');
+            }
+        }
+
+        // الانتظار لضغط المستخدم قبل طلب الأذونات (مطلوب من المتصفح)
+        document.addEventListener('DOMContentLoaded', () => {
+            startBtn.addEventListener('click', startSystem);
         });
     </script>
 </body>
