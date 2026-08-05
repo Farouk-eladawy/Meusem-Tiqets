@@ -24,35 +24,32 @@
         <!-- شاشة البدء وطلب الأذونات -->
         <div id="start-screen" class="absolute inset-0 bg-white rounded-xl flex flex-col items-center justify-center z-10 p-6">
             <h2 class="text-xl font-semibold mb-4 text-gray-800">مرحباً بك</h2>
-            <p class="text-center text-gray-600 mb-6 text-sm">اضغط الزر ليظهر طلب المتصفح لصلاحية <strong>الكاميرا</strong> فقط، ثم يبدأ المسح مع تنبيهات صوتية.</p>
+            <p class="text-center text-gray-600 mb-6 text-sm">اضغط الزر ليظهر طلب المتصفح لصلاحية <strong>الكاميرا</strong> فقط، ثم اختر نوع التذكرة وابدأ المسح.</p>
             <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105">
                 بدء النظام والسماح بالصلاحيات
             </button>
         </div>
 
-        <!-- اختيار نوع التذكرة -->
-        <div class="mb-6">
-            <p class="text-sm font-semibold text-gray-700 mb-2">اختر نوع التذكرة أولاً:</p>
-            <div class="flex gap-4">
-                <label class="flex-1 cursor-pointer">
-                    <input type="radio" name="ticketType" value="Citadel" class="peer hidden" checked>
-                    <div class="text-center p-3 rounded-lg border-2 border-gray-200 peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-all">
-                        🏰 القلعة
-                    </div>
-                </label>
-                <label class="flex-1 cursor-pointer">
-                    <input type="radio" name="ticketType" value="Museum" class="peer hidden">
-                    <div class="text-center p-3 rounded-lg border-2 border-gray-200 peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-all">
-                        🏛️ المتحف
-                    </div>
-                </label>
-            </div>
-        </div>
-
         <!-- حاوية الكاميرا -->
         <div id="reader" class="mb-4"></div>
+
+        <!-- اختيار نوع التذكرة (يظهر بعد تفعيل الكاميرا) -->
+        <div id="ticket-type-section" class="hidden mb-4">
+            <p class="text-sm font-semibold text-gray-700 mb-2 text-center">اختر نوع التذكرة للمسح:</p>
+            <div class="flex gap-3">
+                <button type="button" id="type-citadel" data-type="Citadel"
+                    class="type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50">
+                    🏰 القلعة
+                </button>
+                <button type="button" id="type-museum" data-type="Museum"
+                    class="type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50">
+                    🏛️ المتحف
+                </button>
+            </div>
+            <p id="active-type-label" class="mt-3 text-center text-sm font-medium text-blue-700">اختر القلعة أو المتحف قبل المسح</p>
+        </div>
         
-        <!-- النتيجة والحالة (Optimistic UI) -->
+        <!-- النتيجة والحالة -->
         <div id="status-container" class="hidden text-center p-4 rounded-lg mt-4 transition-all duration-300">
             <p id="status-message" class="font-semibold text-lg"></p>
             <p id="scanned-code" class="text-sm font-mono mt-2 bg-white bg-opacity-50 inline-block px-3 py-1 rounded"></p>
@@ -69,15 +66,19 @@
         let lastScannedCode = null;
         let audioContext = null;
         let systemStarted = false;
+        let selectedTicketType = null;
 
         const SCANNED_STORAGE_KEY = 'scannedTickets_v1';
         const scannedTickets = loadScannedTickets();
 
         const startScreen = document.getElementById('start-screen');
         const startBtn = document.getElementById('start-btn');
+        const ticketTypeSection = document.getElementById('ticket-type-section');
+        const activeTypeLabel = document.getElementById('active-type-label');
         const statusContainer = document.getElementById('status-container');
         const statusMessage = document.getElementById('status-message');
         const scannedCodeDisplay = document.getElementById('scanned-code');
+        const typeButtons = document.querySelectorAll('.type-btn');
 
         function ticketKey(ticketCode, ticketType) {
             return `${ticketType}::${String(ticketCode).trim()}`;
@@ -110,9 +111,30 @@
             return scannedTickets.has(ticketKey(ticketCode, ticketType));
         }
 
-        // الحصول على نوع التذكرة المحدد
+        function getTypeNameArabic(ticketType) {
+            return ticketType === 'Citadel' ? 'القلعة' : 'المتحف';
+        }
+
+        function setSelectedTicketType(ticketType) {
+            selectedTicketType = ticketType;
+
+            typeButtons.forEach(btn => {
+                const isActive = btn.dataset.type === ticketType;
+                btn.classList.toggle('border-blue-600', isActive);
+                btn.classList.toggle('bg-blue-50', isActive);
+                btn.classList.toggle('ring-2', isActive);
+                btn.classList.toggle('ring-blue-300', isActive);
+                btn.classList.toggle('border-gray-200', !isActive);
+                btn.classList.toggle('bg-white', !isActive);
+            });
+
+            activeTypeLabel.textContent = `جاري المسح لتذاكر: ${getTypeNameArabic(ticketType)}`;
+            activeTypeLabel.classList.remove('text-amber-700');
+            activeTypeLabel.classList.add('text-blue-700');
+        }
+
         function getSelectedTicketType() {
-            return document.querySelector('input[name="ticketType"]:checked').value;
+            return selectedTicketType;
         }
 
         // تفعيل الصوت عند أول ضغطة (لا يحتاج إذن ميكروفون؛ فقط لتشغيل التنبيهات)
@@ -246,7 +268,21 @@
             if (ticketCode === lastScannedCode) return;
 
             const currentType = getSelectedTicketType();
-            const typeNameArabic = currentType === 'Citadel' ? 'القلعة' : 'المتحف';
+            if (!currentType) {
+                lastScannedCode = ticketCode;
+                pauseScanningBriefly(1200);
+                playErrorSound();
+                showStatus('اختر نوع التذكرة أولاً (قلعة أو متحف)', ticketCode, 'error');
+                activeTypeLabel.textContent = 'يجب اختيار القلعة أو المتحف قبل المسح';
+                activeTypeLabel.classList.remove('text-blue-700');
+                activeTypeLabel.classList.add('text-amber-700');
+                setTimeout(() => {
+                    if (lastScannedCode === ticketCode) lastScannedCode = null;
+                }, 1500);
+                return;
+            }
+
+            const typeNameArabic = getTypeNameArabic(currentType);
 
             lastScannedCode = ticketCode;
             pauseScanningBriefly(1200);
@@ -380,6 +416,7 @@
 
                 systemStarted = true;
                 startScreen.classList.add('hidden');
+                ticketTypeSection.classList.remove('hidden');
             } catch (err) {
                 console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
                 startBtn.disabled = false;
@@ -391,6 +428,12 @@
         // الانتظار لضغط المستخدم قبل طلب الأذونات (مطلوب من المتصفح)
         document.addEventListener('DOMContentLoaded', () => {
             startBtn.addEventListener('click', startSystem);
+
+            typeButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    setSelectedTicketType(btn.dataset.type);
+                });
+            });
         });
     </script>
 </body>
