@@ -363,7 +363,7 @@
 
         // دالة الإرسال مع التحقق من التكرار
         async function sendToAirtable(ticketCode, ticketType) {
-            const response = await fetch('/.netlify/functions/submit-qr', {
+            const response = await fetch('/api/submit-qr', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
