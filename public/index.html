@@ -55,7 +55,7 @@
     </div>
 
     <script>
-        let html5QrcodeScanner;
+        let html5QrCode;
         let isScanningPaused = false;
         let lastScannedCode = null;
 
@@ -68,7 +68,7 @@
             return document.querySelector('input[name="ticketType"]:checked').value;
         }
 
-        // دالة عرض الحالة للمستخدم
+        // دالة عرض الحالة للمستخدم (سريعة جداً)
         function showStatus(message, code, type = 'success') {
             statusContainer.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
             
@@ -81,11 +81,12 @@
             statusMessage.innerText = message;
             scannedCodeDisplay.innerText = code ? code : '';
             
+            // إخفاء الرسالة بسرعة كبيرة لتجهيز الشاشة للكود التالي
             setTimeout(() => {
                 if(lastScannedCode === code) { 
                     statusContainer.classList.add('hidden');
                 }
-            }, 2500);
+            }, 800); // 0.8 ثانية فقط
         }
 
         // دالة الإرسال في الخلفية (Optimistic UI)
@@ -96,14 +97,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         ticketCode: ticketCode,
-                        ticketType: ticketType // إرسال نوع التذكرة للخادم
+                        ticketType: ticketType
                     })
                 });
                 
                 if (!response.ok) {
                     console.error('خطأ في الإرسال إلى Netlify/Airtable');
                 } else {
-                    console.log(`تم تسجيل التذكرة (${ticketType}) في Airtable بنجاح:`, ticketCode);
+                    console.log(`تم تسجيل التذكرة (${ticketType}) بنجاح:`, ticketCode);
                 }
             } catch (error) {
                 console.error('فشل الاتصال بالخادم:', error);
@@ -114,36 +115,47 @@
         function onScanSuccess(decodedText, decodedResult) {
             if (isScanningPaused || decodedText === lastScannedCode) return;
 
+            // إيقاف مؤقت سريع جداً لمنع القراءة المزدوجة لنفس الكود في نفس اللحظة
             isScanningPaused = true;
             lastScannedCode = decodedText;
             const currentType = getSelectedTicketType();
             const typeNameArabic = currentType === 'Citadel' ? 'القلعة' : 'المتحف';
 
             // إبلاغ المستخدم فوراً
-            showStatus(`تم التقاط تذكرة ${typeNameArabic} ✅`, decodedText, 'success');
+            showStatus(`تم الحفظ (${typeNameArabic}) ✅`, decodedText, 'success');
 
             // الإرسال في الخلفية
             sendToAirtableBackground(decodedText, currentType);
 
-            // إعادة التفعيل السريع
+            // إعادة التفعيل السريع جداً (يحاكي الماكينات)
             setTimeout(() => {
                 isScanningPaused = false;
-                setTimeout(() => { lastScannedCode = null; }, 5000);
-            }, 1500); 
+                // نسمح بمسح نفس التذكرة مرة أخرى بعد 2.5 ثانية (لتجنب المسح المزدوج بالخطأ للورقة نفسها)
+                setTimeout(() => { lastScannedCode = null; }, 2500);
+            }, 500); // نصف ثانية فقط ويكون جاهز للتذكرة الجديدة
         }
 
-        function onScanFailure(error) {
-            // تجاهل أخطاء القراءة المستمرة
-        }
-
-        // إعداد الماسح
+        // إعداد الكاميرا للعمل التلقائي المباشر
         document.addEventListener('DOMContentLoaded', () => {
-            html5QrcodeScanner = new Html5QrcodeScanner(
-                "reader",
-                { fps: 10, qrbox: {width: 250, height: 250}, aspectRatio: 1.0 },
-                false
-            );
-            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            html5QrCode = new Html5Qrcode("reader");
+            
+            // إعدادات المسح السريع
+            const config = { 
+                fps: 30, // سرعة مسح عالية جداً (30 إطار في الثانية)
+                qrbox: { width: 250, height: 250 },
+                aspectRatio: 1.0
+            };
+
+            // تشغيل الكاميرا الخلفية تلقائياً
+            html5QrCode.start(
+                { facingMode: "environment" }, // الكاميرا الخلفية
+                config,
+                onScanSuccess,
+                (error) => { /* تجاهل أخطاء التركيز الطبيعية */ }
+            ).catch(err => {
+                console.error("فشل في فتح الكاميرا التلقائي:", err);
+                alert("الرجاء السماح بصلاحيات الكاميرا ليعمل النظام.");
+            });
         });
     </script>
 </body>
