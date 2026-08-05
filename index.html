@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ماسح التذاكر - القلعة والمتحف</title>
+    <!-- مكتبة Tailwind CSS للتصميم -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- مكتبة html5-qrcode لتشغيل الكاميرا ومسح الـ QR -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        /* تحسين شكل مربع الكاميرا */
+        #reader {
+            width: 100%;
+            min-height: 280px;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            border: 2px solid #e5e7eb;
+            background: #111;
+        }
+        #reader video { object-fit: cover; width: 100% !important; }
+        /* إخفاء الرابط الإعلاني للمكتبة */
+        #reader__dashboard_section_csr span a { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 flex flex-col items-center">
+    <!-- زر Clear cache أعلى الشاشة (بديل الهارد ريفرش على الموبايل) -->
+    <div class="w-full max-w-md flex justify-end mb-2 mt-1 relative z-20">
+        <button type="button" id="clear-cache-btn"
+            class="text-xs sm:text-sm bg-white border border-gray-300 text-gray-700 font-semibold px-3 py-2 rounded-lg shadow-sm active:scale-95 transition-transform">
+            Clear cache
+        </button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-6 relative">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">نظام مسح التذاكر 🎫</h1>
+        
+        <!-- شاشة البدء: اختيار الجدول ثم تشغيل الكاميرا -->
+        <div id="start-screen" class="absolute inset-0 bg-white rounded-xl flex flex-col items-center justify-center z-10 p-6">
+            <h2 class="text-xl font-semibold mb-2 text-gray-800">مرحباً بك</h2>
+            <p class="text-center text-gray-600 mb-4 text-sm">أولاً اختر الجدول المطلوب لمسح الأكواد، ثم فعّل الكاميرا.</p>
+
+            <div class="w-full mb-5">
+                <p class="text-sm font-semibold text-gray-700 mb-2 text-center">اختر الجدول:</p>
+                <div class="flex gap-3">
+                    <button type="button" id="start-type-citadel" data-type="Citadel"
+                        class="start-type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all">
+                        🏰 القلعة
+                    </button>
+                    <button type="button" id="start-type-museum" data-type="Museum"
+                        class="start-type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all">
+                        🏛️ المتحف
+                    </button>
+                </div>
+                <p id="start-type-hint" class="mt-2 text-center text-xs text-amber-700">يجب اختيار القلعة أو المتحف للمتابعة</p>
+            </div>
+
+            <button id="start-btn" disabled
+                class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105 disabled:hover:scale-100">
+                بدء النظام وتفعيل الكاميرا
+            </button>
+            <p id="camera-error" class="hidden mt-4 text-center text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 w-full"></p>
+        </div>
+
+        <!-- اختيار/تغيير الجدول أثناء المسح -->
+        <div id="ticket-type-section" class="mb-4">
+            <p class="text-sm font-semibold text-gray-700 mb-2 text-center">الجدول النشط للمسح:</p>
+            <div class="flex gap-3">
+                <button type="button" id="type-citadel" data-type="Citadel"
+                    class="type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50">
+                    🏰 القلعة
+                </button>
+                <button type="button" id="type-museum" data-type="Museum"
+                    class="type-btn flex-1 text-center p-4 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50">
+                    🏛️ المتحف
+                </button>
+            </div>
+            <p id="active-type-label" class="mt-3 text-center text-sm font-medium text-blue-700">لم يتم اختيار جدول بعد</p>
+        </div>
+
+        <!-- حاوية الكاميرا -->
+        <div id="reader" class="mb-4"></div>
+        
+        <!-- النتيجة والحالة -->
+        <div id="status-container" class="hidden text-center p-4 rounded-lg mt-4 transition-all duration-300">
+            <p id="status-message" class="font-semibold text-lg"></p>
+            <p id="scanned-code" class="text-sm font-mono mt-2 bg-white bg-opacity-50 inline-block px-3 py-1 rounded"></p>
+        </div>
+
+        <div class="mt-4 text-center">
+            <p class="text-xs text-gray-500">قم بتوجيه الكاميرا نحو كود QR الموجود على التذكرة.</p>
+        </div>
+    </div>
+
+    <script>
+        let html5QrCode;
+        let isScanningPaused = false;
+        let lastScannedCode = null;
+        let audioContext = null;
+        let systemStarted = false;
+        let selectedTicketType = null;
+
+        const SCANNED_STORAGE_KEY = 'scannedTickets_v1';
+        const scannedTickets = loadScannedTickets();
+
+        const startScreen = document.getElementById('start-screen');
+        const startBtn = document.getElementById('start-btn');
+        const clearCacheBtn = document.getElementById('clear-cache-btn');
+        const ticketTypeSection = document.getElementById('ticket-type-section');
+        const activeTypeLabel = document.getElementById('active-type-label');
+        const startTypeHint = document.getElementById('start-type-hint');
+        const statusContainer = document.getElementById('status-container');
+        const statusMessage = document.getElementById('status-message');
+        const scannedCodeDisplay = document.getElementById('scanned-code');
+        const typeButtons = document.querySelectorAll('.type-btn');
+        const startTypeButtons = document.querySelectorAll('.start-type-btn');
+        const cameraError = document.getElementById('camera-error');
+
+        function showCameraError(message) {
+            if (!cameraError) return;
+            cameraError.textContent = message;
+            cameraError.classList.remove('hidden');
+        }
+
+        function hideCameraError() {
+            if (!cameraError) return;
+            cameraError.textContent = '';
+            cameraError.classList.add('hidden');
+        }
+
+        async function getLivePermissionsPolicy() {
+            try {
+                const res = await fetch(location.href, { cache: 'no-store' });
+                return res.headers.get('permissions-policy') || '(غير موجودة)';
+            } catch (e) {
+                return '(تعذر القراءة)';
+            }
+        }
+
+        async function diagnoseCameraPolicy() {
+            const policy = await getLivePermissionsPolicy();
+            const allows = !!(
+                (document.featurePolicy && document.featurePolicy.allowsFeature && document.featurePolicy.allowsFeature('camera')) ||
+                (document.permissionsPolicy && document.permissionsPolicy.allowsFeature && document.permissionsPolicy.allowsFeature('camera'))
+            );
+            return { policy, allows };
+        }
+
+        function updateTypeButtonStyles(buttons, ticketType) {
+            buttons.forEach(btn => {
+                const isActive = btn.dataset.type === ticketType;
+                btn.classList.toggle('border-blue-600', isActive);
+                btn.classList.toggle('bg-blue-50', isActive);
+                btn.classList.toggle('ring-2', isActive);
+                btn.classList.toggle('ring-blue-300', isActive);
+                btn.classList.toggle('border-gray-200', !isActive);
+                btn.classList.toggle('bg-white', !isActive);
+            });
+        }
+
+        function setSelectedTicketType(ticketType) {
+            selectedTicketType = ticketType;
+
+            updateTypeButtonStyles(typeButtons, ticketType);
+            updateTypeButtonStyles(startTypeButtons, ticketType);
+
+            const typeName = getTypeNameArabic(ticketType);
+            activeTypeLabel.textContent = `جاري المسح لجدول: ${typeName}`;
+            activeTypeLabel.classList.remove('text-amber-700');
+            activeTypeLabel.classList.add('text-blue-700');
+
+            if (startTypeHint) {
+                startTypeHint.textContent = `تم اختيار جدول ${typeName}`;
+                startTypeHint.classList.remove('text-amber-700');
+                startTypeHint.classList.add('text-blue-700');
+            }
+
+            startBtn.disabled = false;
+        }
+
+        function getSelectedTicketType() {
+            return selectedTicketType;
+        }
+
+        function getTypeNameArabic(ticketType) {
+            return ticketType === 'Citadel' ? 'القلعة' : 'المتحف';
+        }
+
+        function ticketKey(ticketCode, ticketType) {
+            return `${ticketType}::${String(ticketCode).trim()}`;
+        }
+
+        function loadScannedTickets() {
+            try {
+                const raw = localStorage.getItem(SCANNED_STORAGE_KEY);
+                const list = raw ? JSON.parse(raw) : [];
+                return new Set(Array.isArray(list) ? list : []);
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        function persistScannedTickets() {
+            try {
+                localStorage.setItem(SCANNED_STORAGE_KEY, JSON.stringify([...scannedTickets]));
+            } catch (e) {
+                console.warn('تعذر حفظ التذاكر الممسوحة محلياً:', e);
+            }
+        }
+
+        function markTicketScanned(ticketCode, ticketType) {
+            scannedTickets.add(ticketKey(ticketCode, ticketType));
+            persistScannedTickets();
+        }
+
+        function isTicketAlreadyScanned(ticketCode, ticketType) {
+            return scannedTickets.has(ticketKey(ticketCode, ticketType));
+        }
+
+        async function clearAppCacheAndReload() {
+            clearCacheBtn.disabled = true;
+            clearCacheBtn.textContent = 'جاري المسح...';
+
+            try {
+                try { localStorage.clear(); } catch (e) {}
+                try { sessionStorage.clear(); } catch (e) {}
+
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(key => caches.delete(key)));
+                }
+
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(reg => reg.unregister()));
+                }
+            } catch (e) {
+                console.warn('تعذر مسح بعض عناصر الكاش:', e);
+            }
+
+            const url = new URL(window.location.href);
+            url.searchParams.set('_refresh', String(Date.now()));
+            window.location.replace(url.toString());
+        }
+
+        // تفعيل الصوت عند أول ضغطة (لا يحتاج إذن ميكروفون؛ فقط لتشغيل التنبيهات)
+        function unlockAudio() {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+
+            audioContext = audioContext || new AudioCtx();
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().catch(() => {});
+            }
+
+            // بدون نغمة عند البدء حتى لا يُظن أنها أذونات صوت/مايكروفون
+            // التنبيه الصوتي يعمل لاحقاً عند المسح فقط
+        }
+
+        // تشغيل تنبيه صوتي عند المسح
+        function playBeep(frequency = 980, duration = 0.12, volume = 0.18) {
+            if (!audioContext) return;
+
+            try {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.type = 'sine';
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = volume;
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                const now = audioContext.currentTime;
+                oscillator.start(now);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                oscillator.stop(now + duration);
+            } catch (e) {
+                console.warn('تعذر تشغيل الصوت:', e);
+            }
+        }
+
+        function playSuccessSound() {
+            playBeep(980, 0.12, 0.18);
+        }
+
+        function playErrorSound() {
+            playBeep(220, 0.22, 0.22);
+        }
+
+        function permissionErrorMessage(err) {
+            const name = (err && err.name) ? String(err.name) : '';
+            const message = (err && err.message) ? String(err.message) : String(err || '');
+            const text = `${name} ${message}`.toLowerCase();
+
+            // تشخيص مؤكد من المتصفح: السياسة تمنع الكاميرا في هذا المستند
+            const policyBlocksCamera = !!(
+                (document.featurePolicy && document.featurePolicy.allowsFeature && !document.featurePolicy.allowsFeature('camera')) ||
+                (document.permissionsPolicy && document.permissionsPolicy.allowsFeature && !document.permissionsPolicy.allowsFeature('camera'))
+            );
+
+            if (policyBlocksCamera || text.includes('permissions policy')) {
+                return 'الكاميرا محظورة بواسطة Permissions-Policy على السيرفر (camera=()). عدّل ترويسة Cloudflare/Netlify إلى camera=(self) ثم اضغط Clear cache.';
+            }
+
+            if (!window.isSecureContext) {
+                return 'يجب فتح الموقع عبر HTTPS حتى تعمل الكاميرا.';
+            }
+
+            if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || text.includes('requested device not found')) {
+                return 'لم يتم العثور على كاميرا على هذا الجهاز.';
+            }
+
+            if (name === 'NotReadableError' || name === 'TrackStartError' || text.includes('could not start video source')) {
+                return 'الكاميرا مشغولة من تطبيق آخر. أغلقه ثم أعد المحاولة.';
+            }
+
+            if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+                return 'إعدادات الكاميرا غير متوافقة مع الجهاز. أعد المحاولة.';
+            }
+
+            if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || text.includes('permission')) {
+                return 'تم رفض إذن الكاميرا من المتصفح. اسمح بالكاميرا لهذا الموقع ثم أعد المحاولة.';
+            }
+
+            return `تعذر فتح الكاميرا: ${name || message || 'خطأ غير معروف'}`;
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // دالة عرض الحالة للمستخدم (سريعة جداً)
+        function showStatus(message, code, type = 'success') {
+            statusContainer.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-amber-100', 'text-amber-900');
+            
+            if (type === 'success') {
+                statusContainer.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'duplicate') {
+                statusContainer.classList.add('bg-amber-100', 'text-amber-900');
+            } else {
+                statusContainer.classList.add('bg-red-100', 'text-red-800');
+            }
+
+            statusMessage.innerText = message;
+            scannedCodeDisplay.innerText = code ? code : '';
+            
+            setTimeout(() => {
+                if (lastScannedCode === code) { 
+                    statusContainer.classList.add('hidden');
+                }
+            }, type === 'duplicate' || type === 'error' ? 2800 : 1000);
+        }
+
+        function pauseScanningBriefly(ms = 900) {
+            isScanningPaused = true;
+            setTimeout(() => {
+                isScanningPaused = false;
+            }, ms);
+        }
+
+        // دالة الإرسال مع التحقق من التكرار
+        async function sendToAirtable(ticketCode, ticketType) {
+            const response = await fetch('/api/submit-qr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    ticketCode: ticketCode,
+                    ticketType: ticketType
+                })
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (e) {
+                payload = {};
+            }
+
+            if (response.status === 409 || payload.duplicate) {
+                return { ok: false, duplicate: true, payload };
+            }
+
+            if (!response.ok) {
+                return { ok: false, duplicate: false, payload };
+            }
+
+            return { ok: true, duplicate: false, payload };
+        }
+
+        function formatSaveError(payload) {
+            const details = payload && payload.details;
+            const detailMsg = typeof details === 'string'
+                ? details
+                : (details && (details.message || details.type)) || '';
+            const base = (payload && payload.error) || 'فشل التسجيل';
+            return detailMsg ? `${base}: ${detailMsg}` : `${base}، أعد المسح`;
+        }
+
+        // عند التقاط كود QR بنجاح
+        async function onScanSuccess(decodedText) {
+            const ticketCode = String(decodedText || '').trim();
+            if (!ticketCode || isScanningPaused) return;
+
+            if (ticketCode === lastScannedCode) return;
+
+            const currentType = getSelectedTicketType();
+            if (!currentType) {
+                lastScannedCode = ticketCode;
+                pauseScanningBriefly(1200);
+                playErrorSound();
+                showStatus('اختر نوع التذكرة أولاً (قلعة أو متحف)', ticketCode, 'error');
+                activeTypeLabel.textContent = 'يجب اختيار القلعة أو المتحف قبل المسح';
+                activeTypeLabel.classList.remove('text-blue-700');
+                activeTypeLabel.classList.add('text-amber-700');
+                setTimeout(() => {
+                    if (lastScannedCode === ticketCode) lastScannedCode = null;
+                }, 1500);
+                return;
+            }
+
+            const typeNameArabic = getTypeNameArabic(currentType);
+
+            lastScannedCode = ticketCode;
+            pauseScanningBriefly(1500);
+
+            if (isTicketAlreadyScanned(ticketCode, currentType)) {
+                playErrorSound();
+                showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
+                setTimeout(() => {
+                    if (lastScannedCode === ticketCode) lastScannedCode = null;
+                }, 1500);
+                return;
+            }
+
+            // لا نحفظ محلياً إلا بعد نجاح الخادم حتى لا يُمنع إعادة المحاولة خطأً
+            showStatus(`جاري التحقق (${typeNameArabic})...`, ticketCode, 'success');
+
+            try {
+                const result = await sendToAirtable(ticketCode, currentType);
+
+                if (result.duplicate) {
+                    markTicketScanned(ticketCode, currentType);
+                    playErrorSound();
+                    showStatus(`التذكرة مستخدمة مسبقاً (${typeNameArabic}) ⚠️`, ticketCode, 'duplicate');
+                } else if (result.ok) {
+                    markTicketScanned(ticketCode, currentType);
+                    playSuccessSound();
+                    showStatus(`تم الحفظ (${typeNameArabic}) ✅`, ticketCode, 'success');
+                    console.log(`تم تسجيل التذكرة (${currentType}) بنجاح:`, ticketCode);
+                } else {
+                    playErrorSound();
+                    showStatus(formatSaveError(result.payload), ticketCode, 'error');
+                    console.error('فشل التسجيل:', result.payload);
+                }
+            } catch (error) {
+                console.error('فشل الاتصال بالخادم:', error);
+                playErrorSound();
+                showStatus('فشل الاتصال، أعد المسح', ticketCode, 'error');
+            }
+
+            setTimeout(() => {
+                if (lastScannedCode === ticketCode) lastScannedCode = null;
+            }, 1800);
+        }
+
+        async function startWithConstraints(cameraConfig, scanConfig) {
+            await html5QrCode.start(
+                cameraConfig,
+                scanConfig,
+                onScanSuccess,
+                () => {}
+            );
+        }
+
+        function pickBackCameraId(cameras) {
+            if (!cameras || !cameras.length) return null;
+
+            const byLabel = cameras.find(c =>
+                /back|rear|environment|world|خلف|خلفية|خلفى/i.test(c.label || '')
+            );
+            if (byLabel) return byLabel.id;
+
+            // استبعد الكاميرا الأمامية إن وُجدت تسميتها
+            const notFront = cameras.find(c =>
+                c.label && !/front|user|face|أمام|امامية|أمامية/i.test(c.label)
+            );
+            if (notFront) return notFront.id;
+
+            // على أغلب الهواتف آخر كاميرا في القائمة هي الخلفية
+            return cameras[cameras.length - 1].id;
+        }
+
+        async function resetScanner() {
+            try {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    await html5QrCode.stop();
+                }
+            } catch (e) {}
+            try {
+                if (html5QrCode) html5QrCode.clear();
+            } catch (e) {}
+            html5QrCode = new Html5Qrcode("reader", { verbose: false });
+        }
+
+        // تشغيل الكاميرا الخلفية على الموبايل (environment) وليس الأمامية
+        async function startCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                const err = new Error('المتصفح لا يدعم الكاميرا');
+                err.name = 'NotSupportedError';
+                throw err;
+            }
+
+            html5QrCode = new Html5Qrcode("reader", { verbose: false });
+
+            const config = {
+                fps: 15,
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+                    const size = Math.max(180, Math.floor(minEdge * 0.72));
+                    return { width: size, height: size };
+                },
+                rememberLastUsedCamera: true,
+                aspectRatio: 1,
+                experimentalFeatures: {
+                    useBarCodeDetectorIfSupported: true
+                }
+            };
+
+            let lastError = null;
+
+            // 1) إجبار الكاميرا الخلفية
+            try {
+                await startWithConstraints({ facingMode: { exact: 'environment' } }, config);
+                await improveBackCameraFocus();
+                return;
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل exact environment:', err);
+                await resetScanner();
+            }
+
+            // 2) طلب الخلفية بدون exact (متوافق أوسع)
+            try {
+                await startWithConstraints({ facingMode: 'environment' }, config);
+                await improveBackCameraFocus();
+                return;
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل environment:', err);
+                await resetScanner();
+            }
+
+            // 3) اختيار الخلفية من قائمة الأجهزة
+            try {
+                const cameras = await Html5Qrcode.getCameras();
+                const backId = pickBackCameraId(cameras);
+                if (backId) {
+                    await startWithConstraints(backId, config);
+                    await improveBackCameraFocus();
+                    return;
+                }
+            } catch (err) {
+                lastError = err;
+                console.warn('فشل اختيار كاميرا من القائمة:', err);
+                await resetScanner();
+            }
+
+            // 4) ideal environment كآخر محاولة خلفية
+            try {
+                await startWithConstraints({ facingMode: { ideal: 'environment' } }, config);
+                await improveBackCameraFocus();
+                return;
+            } catch (err) {
+                lastError = err;
+            }
+
+            throw lastError || new Error('تعذر تشغيل الكاميرا الخلفية');
+        }
+
+        async function improveBackCameraFocus() {
+            if (!html5QrCode || !html5QrCode.applyVideoConstraints) return;
+            try {
+                await delay(700);
+                await html5QrCode.applyVideoConstraints({
+                    focusMode: 'continuous',
+                    advanced: [{ focusMode: 'continuous' }]
+                });
+            } catch (e) {
+                // بعض الأجهزة لا تدعم focusMode — نتجاهل
+            }
+        }
+
+        async function startSystem() {
+            if (systemStarted) return;
+
+            if (!selectedTicketType) {
+                showCameraError('اختر الجدول أولاً: القلعة أو المتحف');
+                return;
+            }
+
+            hideCameraError();
+            startBtn.disabled = true;
+            startBtn.textContent = 'جاري فتح الكاميرا...';
+
+            try {
+                // أظهر حاوية الكاميرا أولاً (مقاسها لازم يكون ظاهراً قبل التشغيل)
+                startScreen.classList.add('hidden');
+
+                await startCamera();
+                unlockAudio();
+
+                systemStarted = true;
+            } catch (err) {
+                console.error('فشل طلب الأذونات أو تشغيل الكاميرا:', err);
+                startScreen.classList.remove('hidden');
+                startBtn.disabled = false;
+                startBtn.textContent = 'إعادة محاولة تفعيل الكاميرا';
+
+                const diag = await diagnoseCameraPolicy();
+                let msg = permissionErrorMessage(err);
+                msg += ` | Permissions-Policy الحالية: ${diag.policy} | allowsCamera=${diag.allows}`;
+                showCameraError(msg);
+            }
+        }
+
+        // الانتظار لضغط المستخدم قبل طلب الأذونات (مطلوب من المتصفح)
+        document.addEventListener('DOMContentLoaded', () => {
+            startBtn.addEventListener('click', startSystem);
+            clearCacheBtn.addEventListener('click', clearAppCacheAndReload);
+
+            startTypeButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    setSelectedTicketType(btn.dataset.type);
+                });
+            });
+
+            typeButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    setSelectedTicketType(btn.dataset.type);
+                });
+            });
+        });
+    </script>
+</body>
+</html>
