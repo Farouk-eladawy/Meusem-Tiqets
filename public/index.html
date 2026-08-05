@@ -18,7 +18,15 @@
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 flex flex-col items-center">
-    <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-6 mt-4 relative">
+    <!-- زر Clear cache أعلى الشاشة (بديل الهارد ريفرش على الموبايل) -->
+    <div class="w-full max-w-md flex justify-end mb-2 mt-1 relative z-20">
+        <button type="button" id="clear-cache-btn"
+            class="text-xs sm:text-sm bg-white border border-gray-300 text-gray-700 font-semibold px-3 py-2 rounded-lg shadow-sm active:scale-95 transition-transform">
+            Clear cache
+        </button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-6 relative">
         <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">نظام مسح التذاكر 🎫</h1>
         
         <!-- شاشة البدء وطلب الأذونات -->
@@ -73,12 +81,40 @@
 
         const startScreen = document.getElementById('start-screen');
         const startBtn = document.getElementById('start-btn');
+        const clearCacheBtn = document.getElementById('clear-cache-btn');
         const ticketTypeSection = document.getElementById('ticket-type-section');
         const activeTypeLabel = document.getElementById('active-type-label');
         const statusContainer = document.getElementById('status-container');
         const statusMessage = document.getElementById('status-message');
         const scannedCodeDisplay = document.getElementById('scanned-code');
         const typeButtons = document.querySelectorAll('.type-btn');
+
+        async function clearAppCacheAndReload() {
+            clearCacheBtn.disabled = true;
+            clearCacheBtn.textContent = 'جاري المسح...';
+
+            try {
+                try { localStorage.clear(); } catch (e) {}
+                try { sessionStorage.clear(); } catch (e) {}
+
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(key => caches.delete(key)));
+                }
+
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(reg => reg.unregister()));
+                }
+            } catch (e) {
+                console.warn('تعذر مسح بعض عناصر الكاش:', e);
+            }
+
+            // إعادة تحميل بإجبار المتصفح على جلب نسخة جديدة (بديل Hard Refresh)
+            const url = new URL(window.location.href);
+            url.searchParams.set('_refresh', String(Date.now()));
+            window.location.replace(url.toString());
+        }
 
         function ticketKey(ticketCode, ticketType) {
             return `${ticketType}::${String(ticketCode).trim()}`;
@@ -428,6 +464,7 @@
         // الانتظار لضغط المستخدم قبل طلب الأذونات (مطلوب من المتصفح)
         document.addEventListener('DOMContentLoaded', () => {
             startBtn.addEventListener('click', startSystem);
+            clearCacheBtn.addEventListener('click', clearAppCacheAndReload);
 
             typeButtons.forEach(btn => {
                 btn.addEventListener('click', () => {
