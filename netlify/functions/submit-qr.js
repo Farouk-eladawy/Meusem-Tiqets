@@ -13,7 +13,7 @@ exports.handler = async function(event, context) {
     try {
         const data = JSON.parse(event.body || "{}");
         const ticketCode = String(data.ticketCode || "").trim();
-        const ticketType = data.ticketType; // "Citadel" أو "Museum"
+        const ticketType = data.ticketType; // "Citadel" | "Museum" | "Pyramids"
 
         if (!ticketCode || !ticketType) {
             return json(400, { error: "بيانات غير مكتملة" });
@@ -22,7 +22,16 @@ exports.handler = async function(event, context) {
         const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
         const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
-        const tableName = ticketType === "Citadel" ? "Citadel" : "Museum";
+        const tableMap = {
+            Citadel: "Citadel",
+            Museum: "Museum",
+            Pyramids: "Pyramids"
+        };
+        const tableName = tableMap[ticketType];
+
+        if (!tableName) {
+            return json(400, { error: "نوع التذكرة غير مدعوم" });
+        }
 
         if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
             console.error("Missing Airtable Environment Variables");
