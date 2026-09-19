@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ماسح التذاكر - القلعة والمتحف والأهرامات</title>
+    <title>ماسح التذاكر - القلعة والمتحف والأهرامات وسقارة</title>
     <!-- مكتبة Tailwind CSS للتصميم -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- مكتبة html5-qrcode لتشغيل الكاميرا ومسح الـ QR -->
@@ -56,8 +56,12 @@
                         class="start-type-btn flex-1 min-w-[30%] text-center p-3 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all text-sm">
                         🔺 الأهرامات
                     </button>
+                    <button type="button" id="start-type-saqqara" data-type="Saqqara"
+                        class="start-type-btn flex-1 min-w-[30%] text-center p-3 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all text-sm">
+                        🏜️ سقارة
+                    </button>
                 </div>
-                <p id="start-type-hint" class="mt-2 text-center text-xs text-amber-700">يجب اختيار القلعة أو المتحف أو الأهرامات للمتابعة</p>
+                <p id="start-type-hint" class="mt-2 text-center text-xs text-amber-700">يجب اختيار نوع التذكرة للمتابعة</p>
             </div>
 
             <button id="start-btn" disabled
@@ -82,6 +86,10 @@
                 <button type="button" id="type-pyramids" data-type="Pyramids"
                     class="type-btn flex-1 min-w-[30%] text-center p-3 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50 text-sm">
                     🔺 الأهرامات
+                </button>
+                <button type="button" id="type-saqqara" data-type="Saqqara"
+                    class="type-btn flex-1 min-w-[30%] text-center p-3 rounded-xl border-2 border-gray-200 bg-white font-semibold text-gray-800 transition-all hover:bg-gray-50 text-sm">
+                    🏜️ سقارة
                 </button>
             </div>
             <p id="active-type-label" class="mt-3 text-center text-sm font-medium text-blue-700">لم يتم اختيار جدول بعد</p>
@@ -195,6 +203,7 @@
             if (ticketType === 'Citadel') return 'القلعة';
             if (ticketType === 'Museum') return 'المتحف';
             if (ticketType === 'Pyramids') return 'الأهرامات';
+            if (ticketType === 'Saqqara') return 'سقارة';
             return ticketType;
         }
 
@@ -422,8 +431,8 @@
                 lastScannedCode = ticketCode;
                 pauseScanningBriefly(1200);
                 playErrorSound();
-                showStatus('اختر نوع التذكرة أولاً (قلعة أو متحف)', ticketCode, 'error');
-                activeTypeLabel.textContent = 'يجب اختيار القلعة أو المتحف أو الأهرامات قبل المسح';
+                showStatus('اختر نوع التذكرة أولاً', ticketCode, 'error');
+                activeTypeLabel.textContent = 'يجب اختيار نوع التذكرة قبل المسح';
                 activeTypeLabel.classList.remove('text-blue-700');
                 activeTypeLabel.classList.add('text-amber-700');
                 setTimeout(() => {
@@ -608,7 +617,7 @@
             if (systemStarted) return;
 
             if (!selectedTicketType) {
-                showCameraError('اختر الجدول أولاً: القلعة أو المتحف أو الأهرامات');
+                showCameraError('اختر الجدول أولاً: القلعة أو المتحف أو الأهرامات أو سقارة');
                 return;
             }
 

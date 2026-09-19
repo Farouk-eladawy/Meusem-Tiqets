@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
             : (req.body || {});
 
         const ticketCode = String(data.ticketCode || "").trim();
-        const ticketType = data.ticketType; // "Citadel" | "Museum" | "Pyramids"
+        const ticketType = data.ticketType; // "Citadel" | "Museum" | "Pyramids" | "Saqqara"
 
         if (!ticketCode || !ticketType) {
             return res.status(400).json({ error: "بيانات غير مكتملة" });
@@ -24,7 +24,8 @@ module.exports = async function handler(req, res) {
         const tableMap = {
             Citadel: "Citadel",
             Museum: "Museum",
-            Pyramids: "Pyramids"
+            Pyramids: "Pyramids",
+            Saqqara: "Saqqara"
         };
         const tableName = tableMap[ticketType];
 

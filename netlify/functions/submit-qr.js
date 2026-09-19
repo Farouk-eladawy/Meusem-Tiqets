@@ -13,7 +13,7 @@ exports.handler = async function(event, context) {
     try {
         const data = JSON.parse(event.body || "{}");
         const ticketCode = String(data.ticketCode || "").trim();
-        const ticketType = data.ticketType; // "Citadel" | "Museum" | "Pyramids"
+        const ticketType = data.ticketType; // "Citadel" | "Museum" | "Pyramids" | "Saqqara"
 
         if (!ticketCode || !ticketType) {
             return json(400, { error: "بيانات غير مكتملة" });
@@ -25,7 +25,8 @@ exports.handler = async function(event, context) {
         const tableMap = {
             Citadel: "Citadel",
             Museum: "Museum",
-            Pyramids: "Pyramids"
+            Pyramids: "Pyramids",
+            Saqqara: "Saqqara"
         };
         const tableName = tableMap[ticketType];
 
