@@ -381,8 +381,8 @@
             }, ms);
         }
 
-        // دالة الإرسال مع التحقق من التكرار
-        async function sendToAirtable(ticketCode, ticketType) {
+        // دالة الإرسال إلى Baserow مع التحقق من التكرار
+        async function sendToBaserow(ticketCode, ticketType) {
             const response = await fetch('/api/submit-qr', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -459,7 +459,7 @@
             showStatus(`جاري التحقق (${typeNameArabic})...`, ticketCode, 'success');
 
             try {
-                const result = await sendToAirtable(ticketCode, currentType);
+                const result = await sendToBaserow(ticketCode, currentType);
 
                 if (result.duplicate) {
                     markTicketScanned(ticketCode, currentType);
